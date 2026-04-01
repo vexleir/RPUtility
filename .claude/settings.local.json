@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install:*)",
+      "Bash(python -m pytest tests/ -v --tb=short)",
+      "Bash(python -m pytest tests/ -q --tb=short)",
+      "Bash(python -c \"from app.web.server import app; print\\(''Server imports OK''\\)\")",
+      "Bash(python -c \"from app.web.server import app; print\\(''''OK''''\\)\")",
+      "Bash(python -m pytest tests/ -x -q)",
+      "Bash(python -m pytest tests/test_prompting.py::TestFormatMemories::test_raw_mode_marks_rumors -v)",
+      "Bash(python -m pytest tests/ -q)",
+      "Bash(python -m pytest tests/test_phase5.py -v)",
+      "Bash(python -m pytest tests/test_phase5.py -v --tb=short)",
+      "Bash(python -m pytest tests/ -v --tb=short -q)",
+      "Bash(python -m pytest tests/test_phase6.py -v --tb=short)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\devio\\.claude\\projects\\c--Antigravity-Projects-RP-Utility\\memory"
+    ]
+  }
+}

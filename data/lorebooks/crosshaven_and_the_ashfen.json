@@ -1,0 +1,54 @@
+{
+  "name": "Crosshaven and the Ashfen",
+  "description": "World lore for the trade city of Crosshaven and the surrounding Ashfen region.",
+  "entries": [
+    {
+      "keys": ["Crosshaven", "trade city", "city"],
+      "content": "Crosshaven is a sprawling trade city built at the confluence of the Ven River and the Saltmarsh Road. It is governed by the Merchant Conclave, a council of seven guild masters who settle disputes with more paperwork than swords. The city is known for its crowded Undermarket (a vast subterranean bazaar), its six rival courier guilds, and the peculiar tradition of painting front doors in the colour of one's trade guild. Population: roughly 80,000.",
+      "priority": 10,
+      "comment": "Main city overview"
+    },
+    {
+      "keys": ["Tallow & Ink", "tavern", "scholars' tavern"],
+      "content": "The Tallow & Ink is a narrow, three-storey tavern near the Scholars' Quarter, popular with researchers, cartographers, and anyone who needs to work while drinking. The proprietor, a retired archivist named Orveth Hale, keeps the noise low, the candles plentiful, and the stew perpetually warm. Rooms are small but quiet. The corner booth on the ground floor is considered Lyra Ashveil's by common consent — no one remembers when this started.",
+      "priority": 9,
+      "comment": "Starting location"
+    },
+    {
+      "keys": ["Emberveil Academy", "Academy", "Emberveil"],
+      "content": "Emberveil Academy is the foremost institution of scholarly and arcane study in the known world, located in the mountain city of Veilspire three weeks' travel north of Crosshaven. Admission is highly competitive; expulsion is rare and carries severe social stigma. The Academy maintains a vast restricted archive known as the Deep Stacks, access to which requires a senior fellowship. Three years ago, a small number of fellows were quietly expelled; the official reason given was 'conduct unbecoming the scholarly tradition', a phrase so vague it communicates everything and nothing.",
+      "priority": 8,
+      "comment": "Lyra's backstory hook"
+    },
+    {
+      "keys": ["Ashfen", "fen", "swamp", "marsh"],
+      "content": "The Ashfen is a vast, fog-prone wetland region stretching southeast of Crosshaven for roughly forty miles. It is partially navigable by flat-bottomed boat and fully navigable only by those with a guide, a death wish, or both. The Ashfen is home to the Fenborn — a reclusive people of uncertain origin who trade in rare herbs, unusual minerals, and information. It is also the site of several submerged ruins from an empire that predates the current historical record, which is why scholars keep dying there.",
+      "priority": 7,
+      "comment": "Major geographic feature"
+    },
+    {
+      "keys": ["Merchant Conclave", "Conclave", "guild masters", "guild"],
+      "content": "The Merchant Conclave governs Crosshaven through a system of guild representation. The seven seats are held by: the Couriers' Coalition, the Foundry Workers, the Scholars' Collegium, the Healers' Society, the River Pilots, the Provisioners, and (controversially) the Undermarket Syndicate, whose membership is not publicly disclosed. The Conclave meets every new moon at the Irongate Hall. Corruption is widely assumed and very difficult to prove.",
+      "priority": 6,
+      "comment": "Political structure"
+    },
+    {
+      "keys": ["Undermarket", "underground market", "bazaar"],
+      "content": "The Undermarket is a vast subterranean bazaar beneath Crosshaven, accessible through numerous street-level cellar entrances. It operates on a cash-only basis, asks no questions, and sells virtually everything. Sections are loosely organised by type of goods: alchemicals near the east entrance, weapons toward the centre, information brokers in the deep south passages. The Undermarket has its own informal governance: disputes are settled by the Floor Arbiters, who are paid by both sides and trusted by neither.",
+      "priority": 6,
+      "comment": "Black market / adventure hook location"
+    },
+    {
+      "keys": ["Fenborn", "fen people", "fen folk"],
+      "content": "The Fenborn are the indigenous people of the Ashfen wetlands. They are broadly humanoid but adapted to the fen environment — slightly amphibious, with excellent night vision and an unsettling ability to move silently. They are not hostile by default but are deeply territorial and have little patience for outsiders who enter the Ashfen without permission. They communicate with the wider world through a small number of trade liaisons who visit Crosshaven's Undermarket seasonally.",
+      "priority": 5,
+      "comment": "Indigenous culture"
+    },
+    {
+      "keys": ["Old Archive", "archive vaults", "vaults", "Deep Stacks"],
+      "content": "References to the 'Old Archive' in Crosshaven typically refer to the City Archive Annex — a sealed lower floor of the Scholars' Collegium building that was closed to the public after a structural incident twelve years ago. Rumour holds that the incident was not structural. Access now requires a writ from the Conclave, which takes six months and is rarely granted. Those familiar with Lyra Ashveil's history note that she has obtained access twice without such a writ, and has declined to explain how.",
+      "priority": 8,
+      "comment": "Adventure hook / Lyra history"
+    }
+  ]
+}

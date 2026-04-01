@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RP Utility — Session Status</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script>window.__SESSION_ID__ = "{{SESSION_ID}}";</script>
+</head>
+<body class="status-layout">
+
+  <!-- ── Header ──────────────────────────────────────────────────── -->
+  <header class="status-header">
+    <div class="status-header-left">
+      <a href="/chat/{{SESSION_ID}}" class="btn btn-ghost btn-sm">← Back to Chat</a>
+    </div>
+    <div class="status-header-center">
+      <div class="status-header-title" id="session-title">Loading…</div>
+      <div class="status-header-sub" id="session-sub"></div>
+    </div>
+    <div class="status-header-right">
+      <button class="btn btn-secondary btn-sm" onclick="refreshAll()">↺ Refresh</button>
+    </div>
+  </header>
+
+  <!-- ── Summary bar ─────────────────────────────────────────────── -->
+  <div class="status-summary-bar">
+    <div class="summary-stat" id="stat-turns">
+      <div class="summary-stat-value">—</div>
+      <div class="summary-stat-label">Turns</div>
+    </div>
+    <div class="summary-stat" id="stat-memories">
+      <div class="summary-stat-value">—</div>
+      <div class="summary-stat-label">Active Memories</div>
+    </div>
+    <div class="summary-stat" id="stat-world-state">
+      <div class="summary-stat-value">—</div>
+      <div class="summary-stat-label">World State Entries</div>
+    </div>
+    <div class="summary-stat" id="stat-relationships">
+      <div class="summary-stat-value">—</div>
+      <div class="summary-stat-label">Relationships</div>
+    </div>
+    <div class="summary-stat" id="stat-archived">
+      <div class="summary-stat-value">—</div>
+      <div class="summary-stat-label">Archived Memories</div>
+    </div>
+    <div class="summary-stat" id="stat-contradictions">
+      <div class="summary-stat-value">—</div>
+      <div class="summary-stat-label">Contradictions</div>
+    </div>
+    <div class="summary-stat" id="stat-objectives">
+      <div class="summary-stat-value">—</div>
+      <div class="summary-stat-label">Active Objectives</div>
+    </div>
+    <div class="summary-stat" id="stat-bookmarks">
+      <div class="summary-stat-value">—</div>
+      <div class="summary-stat-label">Bookmarks</div>
+    </div>
+    <div class="summary-stat" id="stat-npcs">
+      <div class="summary-stat-value">—</div>
+      <div class="summary-stat-label">Known NPCs</div>
+    </div>
+    <div class="summary-stat" id="stat-locations">
+      <div class="summary-stat-value">—</div>
+      <div class="summary-stat-label">Locations Visited</div>
+    </div>
+    <div class="summary-stat" id="stat-beats">
+      <div class="summary-stat-value">—</div>
+      <div class="summary-stat-label">Story Beats</div>
+    </div>
+    <div class="summary-stat" id="stat-items">
+      <div class="summary-stat-value">—</div>
+      <div class="summary-stat-label">Inventory Items</div>
+    </div>
+    <div class="summary-stat" id="stat-effects">
+      <div class="summary-stat-value">—</div>
+      <div class="summary-stat-label">Status Effects</div>
+    </div>
+  </div>
+
+  <!-- ── Main content ─────────────────────────────────────────────── -->
+  <div class="status-body">
+
+    <!-- ── Scene ── -->
+    <section class="status-section" id="scene-section">
+      <div class="status-section-header" onclick="toggleSection('scene-section')">
+        <span>📍 Current Scene</span>
+        <span class="status-chevron">▼</span>
+      </div>
+      <div class="status-section-body" id="scene-body">
+        <div class="status-loading">Loading…</div>
+      </div>
+    </section>
+
+    <!-- ── Relationships ── -->
+    <section class="status-section" id="rels-section">
+      <div class="status-section-header" onclick="toggleSection('rels-section')">
+        <span>🤝 Relationships</span>
+        <span class="status-chevron">▼</span>
+      </div>
+      <div class="status-section-body">
+        <div class="status-filter-bar" id="rels-filters">
+          <select id="filter-rel-character" onchange="applyRelFilters()">
+            <option value="">All characters</option>
+          </select>
+          <select id="filter-rel-role" onchange="applyRelFilters()">
+            <option value="">Source or target</option>
+            <option value="source">As source</option>
+            <option value="target">As target</option>
+          </select>
+          <span class="filter-count" id="rels-filter-count"></span>
+        </div>
+        <div id="rels-body">
+          <div class="status-loading">Loading…</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── World State ── -->
+    <section class="status-section" id="ws-section">
+      <div class="status-section-header" onclick="toggleSection('ws-section')">
+        <span>🌍 World State</span>
+        <span class="status-chevron">▼</span>
+      </div>
+      <div class="status-section-body" id="ws-body">
+        <div class="status-loading">Loading…</div>
+      </div>
+    </section>
+
+    <!-- ── Active Memories ── -->
+    <section class="status-section" id="mem-section">
+      <div class="status-section-header" onclick="toggleSection('mem-section')">
+        <span>🧠 Active Memories</span>
+        <span class="status-chevron">▼</span>
+      </div>
+      <div class="status-section-body" id="mem-section-body">
+        <!-- Filter bar -->
+        <div class="status-filter-bar" id="mem-filters">
+          <select id="filter-type" onchange="applyMemoryFilters()">
+            <option value="">All types</option>
+            <option value="event">Event</option>
+            <option value="world_fact">World Fact</option>
+            <option value="character_detail">Character Detail</option>
+            <option value="relationship_change">Relationship Change</option>
+            <option value="world_state">World State</option>
+            <option value="rumor">Rumor</option>
+            <option value="suspicion">Suspicion</option>
+            <option value="consolidation">Consolidation</option>
+          </select>
+          <select id="filter-importance" onchange="applyMemoryFilters()">
+            <option value="">All importance</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+          <select id="filter-certainty" onchange="applyMemoryFilters()">
+            <option value="">All certainty</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="rumor">Rumor</option>
+            <option value="suspicion">Suspicion</option>
+            <option value="lie">Lie</option>
+            <option value="myth">Myth</option>
+          </select>
+          <span class="filter-count" id="mem-filter-count"></span>
+        </div>
+        <div id="mem-body">
+          <div class="status-loading">Loading…</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Player Objectives ── -->
+    <section class="status-section" id="objectives-section">
+      <div class="status-section-header" onclick="toggleSection('objectives-section')">
+        <span>🎯 Player Objectives</span>
+        <span class="status-chevron">▼</span>
+      </div>
+      <div class="status-section-body" id="objectives-body">
+        <div class="status-loading">Loading…</div>
+      </div>
+    </section>
+
+    <!-- ── Bookmarks ── -->
+    <section class="status-section status-section-collapsed" id="bookmarks-section">
+      <div class="status-section-header" onclick="toggleSection('bookmarks-section')">
+        <span>⭐ Story Bookmarks</span>
+        <span class="status-chevron">▼</span>
+      </div>
+      <div class="status-section-body" id="bookmarks-body">
+        <div class="status-loading">Loading…</div>
+      </div>
+    </section>
+
+    <!-- ── Contradiction Flags ── -->
+    <section class="status-section status-section-collapsed" id="contra-section">
+      <div class="status-section-header" onclick="toggleSection('contra-section')">
+        <span>⚠ Contradiction Flags</span>
+        <span class="status-chevron">▼</span>
+      </div>
+      <div class="status-section-body" id="contra-body">
+        <div class="status-loading">Loading…</div>
+      </div>
+    </section>
+
+    <!-- ── Emotional State ── -->
+    <section class="status-section" id="emotional-section">
+      <div class="status-section-header" onclick="toggleSection('emotional-section')">
+        <span>🧠 Player Character State</span>
+        <span class="status-chevron">▼</span>
+      </div>
+      <div class="status-section-body" id="emotional-body">
+        <div class="status-loading">Loading…</div>
+      </div>
+    </section>
+
+    <!-- ── Inventory ── -->
+    <section class="status-section" id="inventory-section">
+      <div class="status-section-header" onclick="toggleSection('inventory-section')">
+        <span>🎒 Inventory</span>
+        <span class="status-chevron">▼</span>
+      </div>
+      <div class="status-section-body" id="inventory-body">
+        <div class="status-loading">Loading…</div>
+      </div>
+    </section>
+
+    <!-- ── Status Effects ── -->
+    <section class="status-section" id="effects-section">
+      <div class="status-section-header" onclick="toggleSection('effects-section')">
+        <span>⚡ Status Effects</span>
+        <span class="status-chevron">▼</span>
+      </div>
+      <div class="status-section-body" id="effects-body">
+        <div class="status-loading">Loading…</div>
+      </div>
+    </section>
+
+    <!-- ── NPC Roster ── -->
+    <section class="status-section" id="npcs-section">
+      <div class="status-section-header" onclick="toggleSection('npcs-section')">
+        <span>🧑‍🤝‍🧑 NPC Roster</span>
+        <span class="status-chevron">▼</span>
+      </div>
+      <div class="status-section-body" id="npcs-body">
+        <div class="status-loading">Loading…</div>
+      </div>
+    </section>
+
+    <!-- ── Location Registry ── -->
+    <section class="status-section" id="locations-section">
+      <div class="status-section-header" onclick="toggleSection('locations-section')">
+        <span>🗺 Location Registry</span>
+        <span class="status-chevron">▼</span>
+      </div>
+      <div class="status-section-body" id="locations-body">
+        <div class="status-loading">Loading…</div>
+      </div>
+    </section>
+
+    <!-- ── Story Beats ── -->
+    <section class="status-section" id="beats-section">
+      <div class="status-section-header" onclick="toggleSection('beats-section')">
+        <span>📖 Story Beats</span>
+        <span class="status-chevron">▼</span>
+      </div>
+      <div class="status-section-body" id="beats-body">
+        <div class="status-loading">Loading…</div>
+      </div>
+    </section>
+
+    <!-- ── Quest Log ── -->
+    <section class="status-section" id="quests-section">
+      <div class="status-section-header" onclick="toggleSection('quests-section')">
+        <span>📜 Quest Log</span>
+        <span class="status-chevron">▼</span>
+      </div>
+      <div class="status-section-body" id="quests-body">
+        <div class="status-loading">Loading…</div>
+      </div>
+    </section>
+
+    <!-- ── Session Journal ── -->
+    <section class="status-section status-section-collapsed" id="journal-section">
+      <div class="status-section-header" onclick="toggleSection('journal-section')">
+        <span>📓 Session Journal</span>
+        <span class="status-chevron">▼</span>
+      </div>
+      <div class="status-section-body" id="journal-body">
+        <div class="status-loading">Loading…</div>
+      </div>
+    </section>
+
+    <!-- ── Lore Notes ── -->
+    <section class="status-section status-section-collapsed" id="lore-section">
+      <div class="status-section-header" onclick="toggleSection('lore-section')">
+        <span>📚 Lore Notes</span>
+        <span class="status-chevron">▼</span>
+      </div>
+      <div class="status-section-body" id="lore-body">
+        <div class="status-loading">Loading…</div>
+      </div>
+    </section>
+
+    <!-- ── Character Stats ── -->
+    <section class="status-section" id="stats-section">
+      <div class="status-section-header" onclick="toggleSection('stats-section')">
+        <span>🎲 Character Stats</span>
+        <span class="status-chevron">▼</span>
+      </div>
+      <div class="status-section-body" id="stats-body">
+        <div class="status-loading">Loading…</div>
+      </div>
+    </section>
+
+    <!-- ── Skill Check Log ── -->
+    <section class="status-section status-section-collapsed" id="checks-section">
+      <div class="status-section-header" onclick="toggleSection('checks-section')">
+        <span>🎯 Skill Check Log</span>
+        <span class="status-chevron">▼</span>
+      </div>
+      <div class="status-section-body" id="checks-body">
+        <div class="status-loading">Loading…</div>
+      </div>
+    </section>
+
+    <!-- ── Narrative Arc ── -->
+    <section class="status-section" id="arc-section">
+      <div class="status-section-header" onclick="toggleSection('arc-section')">
+        <span>📖 Narrative Arc</span>
+        <span class="status-chevron">▼</span>
+      </div>
+      <div class="status-section-body" id="arc-body">
+        <div class="status-loading">Loading…</div>
+      </div>
+    </section>
+
+    <!-- ── Factions ── -->
+    <section class="status-section" id="factions-section">
+      <div class="status-section-header" onclick="toggleSection('factions-section')">
+        <span>⚔ Factions</span>
+        <span class="status-chevron">▼</span>
+      </div>
+      <div class="status-section-body" id="factions-body">
+        <div class="status-loading">Loading…</div>
+      </div>
+    </section>
+
+    <!-- ── Archived Memories ── -->
+    <section class="status-section status-section-collapsed" id="arch-section">
+      <div class="status-section-header" onclick="toggleSection('arch-section')">
+        <span>🗃 Archived Memories <span class="dim" style="font-size:12px;font-weight:400">(consolidated)</span></span>
+        <span class="status-chevron">▼</span>
+      </div>
+      <div class="status-section-body" id="arch-body">
+        <div class="status-loading">Loading…</div>
+      </div>
+    </section>
+
+  </div><!-- end status-body -->
+
+  <script src="/static/status.js"></script>
+</body>
+</html>

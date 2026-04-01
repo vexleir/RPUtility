@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RP Utility — Chat</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script>window.__SESSION_ID__ = "{{SESSION_ID}}";</script>
+  <style>
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  </style>
+</head>
+<body class="chat-layout">
+
+  <!-- ── Header ──────────────────────────────────────────────────── -->
+  <header class="chat-header">
+    <a href="/" class="btn btn-ghost btn-sm">← Sessions</a>
+
+    <div class="chat-header-info">
+      <div class="chat-header-title" id="session-title">Loading…</div>
+      <div class="chat-header-sub">
+        <span id="char-name"></span>
+        <span class="badge" id="model-badge"></span>
+        <span class="dim" id="location-badge"></span>
+      </div>
+    </div>
+
+    <div class="chat-header-actions">
+      <button class="btn btn-ghost btn-sm" id="search-toggle-btn" title="Search conversation">🔍</button>
+      <a href="/api/session/{{SESSION_ID}}/export" class="btn btn-ghost btn-sm" title="Export session as markdown" download>⬇</a>
+      <a href="/chat/{{SESSION_ID}}/status" class="btn btn-ghost btn-sm" title="Session status &amp; inspection">📊 Status</a>
+      <button class="btn btn-ghost btn-sm" onclick="refreshSidebar()" title="Refresh sidebar state">↺</button>
+    </div>
+  </header>
+
+  <!-- ── Error banner ─────────────────────────────────────────────── -->
+  <div class="banner banner-error" id="error-banner" style="display:none;margin:8px 16px;border-radius:8px"></div>
+
+  <!-- ── Search bar ────────────────────────────────────────────────── -->
+  <div id="search-bar" class="search-bar hidden">
+    <input type="text" id="search-input" placeholder="Search conversation…" autocomplete="off">
+    <span id="search-count" class="search-count"></span>
+    <button class="btn btn-ghost btn-sm" id="search-clear-btn">✕</button>
+  </div>
+
+  <!-- ── Body ────────────────────────────────────────────────────── -->
+  <div class="chat-body">
+
+    <!-- Messages + Input -->
+    <div class="messages-col">
+
+      <div class="messages-area" id="messages-area">
+        <!-- Messages rendered by JS -->
+      </div>
+
+      <!-- Typing indicator (hidden via inline style only — do NOT add hidden class) -->
+      <div class="typing-indicator" id="typing-indicator" style="display:none">
+        <div class="typing-dots">
+          <span></span><span></span><span></span>
+        </div>
+        <span class="dim" style="font-size:12px" id="char-name-typing">Thinking…</span>
+      </div>
+
+      <!-- Input area -->
+      <div class="input-area">
+        <textarea
+          id="message-input"
+          placeholder="Write your message… (Enter to send, Shift+Enter for newline)"
+          rows="1"
+        ></textarea>
+        <button class="btn btn-primary" id="send-btn">Send</button>
+      </div>
+      <div class="input-hint">Enter to send &nbsp;·&nbsp; Shift+Enter for new line</div>
+    </div>
+
+    <!-- ── Sidebar ────────────────────────────────────────────────── -->
+    <aside class="sidebar-col">
+
+      <!-- Scene -->
+      <div class="sidebar-section" id="scene-section">
+        <div class="sidebar-section-header">
+          <span>📍 Scene</span>
+          <span class="sidebar-chevron">▼</span>
+        </div>
+        <div class="sidebar-content">
+          <div class="scene-item">
+            <label>Location</label>
+            <p id="scene-location">—</p>
+          </div>
+          <div class="scene-item" id="clock-item" style="display:none">
+            <label>In-World Time</label>
+            <p id="scene-clock" class="dim" style="font-size:12px">—</p>
+          </div>
+          <div class="scene-item" id="status-effects-item" style="display:none">
+            <label>Status Effects</label>
+            <div id="scene-status-effects"></div>
+          </div>
+          <div class="scene-item" id="mood-item" style="display:none">
+            <label>Character State</label>
+            <p id="scene-mood" class="dim" style="font-size:12px">—</p>
+          </div>
+          <div class="scene-item">
+            <label>Update location</label>
+            <div class="editable-field">
+              <input type="text" id="location-edit-input" placeholder="New location…">
+              <button class="btn btn-secondary btn-sm" id="save-location-btn">Save</button>
+            </div>
+          </div>
+          <div class="scene-item">
+            <label>Present</label>
+            <div class="chars-list" id="scene-chars"></div>
+          </div>
+          <div class="scene-item">
+            <label>Scene summary</label>
+            <p id="scene-summary" class="dim" style="font-size:12px;line-height:1.5"></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Objectives -->
+      <div class="sidebar-section" id="objectives-section">
+        <div class="sidebar-section-header">
+          <span>🎯 Objectives</span>
+          <span class="sidebar-chevron">▼</span>
+        </div>
+        <div class="sidebar-content">
+          <div id="objectives-list">
+            <div class="dim" style="font-size:12px;text-align:center">Loading…</div>
+          </div>
+          <div class="objective-add-row">
+            <input type="text" id="new-objective-input" placeholder="Add objective…" onkeydown="if(event.key==='Enter')addObjective()">
+            <button class="btn btn-secondary btn-sm" onclick="addObjective()">Add</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Memories -->
+      <div class="sidebar-section" id="memories-section">
+        <div class="sidebar-section-header">
+          <span>🧠 Memory &nbsp;<span id="memory-count" style="color:var(--accent-light)">0</span></span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <button class="btn btn-ghost btn-sm" id="refresh-memories-btn" style="padding:2px 8px;font-size:11px" title="Refresh memories">↺</button>
+            <span class="sidebar-chevron">▼</span>
+          </div>
+        </div>
+        <div class="sidebar-content">
+          <div class="memory-list" id="memory-list">
+            <div class="dim" style="font-size:12px;text-align:center">Loading…</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Relationships -->
+      <div class="sidebar-section" id="rels-section">
+        <div class="sidebar-section-header">
+          <span>🤝 Relationships</span>
+          <span class="sidebar-chevron">▼</span>
+        </div>
+        <div class="sidebar-content">
+          <div id="rels-container">
+            <div class="dim" style="font-size:12px;text-align:center">Loading…</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- World State -->
+      <div class="sidebar-section collapsed" id="world-state-section">
+        <div class="sidebar-section-header">
+          <span>🌍 World State</span>
+          <span class="sidebar-chevron">▼</span>
+        </div>
+        <div class="sidebar-content">
+          <div class="world-state-list" id="world-state-list">
+            <div class="dim" style="font-size:12px;text-align:center">No world state tracked yet</div>
+          </div>
+        </div>
+      </div>
+
+    </aside>
+
+  </div><!-- end chat-body -->
+
+  <script src="/static/chat.js"></script>
+
+  <!-- Wire up location save after DOM ready -->
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      const saveBtn = document.getElementById("save-location-btn");
+      if (saveBtn) {
+        saveBtn.addEventListener("click", async () => {
+          const input = document.getElementById("location-edit-input");
+          const newLocation = input.value.trim();
+          if (!newLocation) return;
+          try {
+            await fetch(`/api/session/${window.__SESSION_ID__}/scene`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ location: newLocation }),
+            });
+            input.value = "";
+            await refreshScene();
+            const badge = document.getElementById("location-badge");
+            if (badge) badge.textContent = "📍 " + newLocation;
+          } catch (e) {
+            console.error(e);
+          }
+        });
+      }
+    });
+  </script>
+
+</body>
+</html>
