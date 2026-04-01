@@ -24,13 +24,13 @@ Read the current scene state and the latest exchange, then output an updated sce
 Output ONLY a JSON object with these fields:
 {
   "summary": "1-3 sentence present-tense description of what is happening right now",
-  "location": "current location name, or null if unchanged",
+  "location": "current location name where the scene takes place",
   "active_characters": ["name1", "name2"] or null if unchanged
 }
 
 Rules:
 - summary: always provide an updated one; keep it concise and present-tense
-- location: only set if the characters actually moved somewhere new
+- location: ALWAYS output the current location name. If no location is explicitly stated, infer it from context (e.g. a tavern, a forest, a castle). If truly unknown, output "Unknown". Update if the characters moved somewhere new.
 - active_characters: only set if characters entered or left the scene
 - Output ONLY the JSON object, no other text"""
 
