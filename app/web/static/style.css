@@ -1000,10 +1000,36 @@ select option { background: var(--surface2); }
 /* ══════════════════════════════════════════════════════════════════
    GENERATED IMAGES in chat
    ══════════════════════════════════════════════════════════════════ */
-.generated-image-bubble { padding: 10px 12px; }
+.generated-image-bubble { padding: 10px 12px; position: relative; }
 .gen-image-prompt {
   font-size: 12px; color: var(--text-muted); font-style: italic;
   margin-bottom: 8px;
+}
+.img-delete-btn {
+  position: absolute; top: 6px; right: 6px;
+  background: rgba(0,0,0,0.55); border: 1px solid var(--border);
+  color: var(--text-muted); border-radius: 50%;
+  width: 22px; height: 22px; font-size: 11px; line-height: 1;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  opacity: 0; transition: opacity 0.15s;
+}
+.generated-image-bubble:hover .img-delete-btn { opacity: 1; }
+.img-delete-btn:hover { background: var(--red); color: #fff; border-color: var(--red); }
+
+/* Image gen style selector */
+.img-style-grid {
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.img-style-option {
+  display: flex; align-items: center; gap: 5px;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 10px; cursor: pointer;
+  font-size: 12px; transition: border-color 0.15s, background 0.15s;
+}
+.img-style-option:hover { border-color: var(--accent-light); }
+.img-style-option input[type="radio"] { display: none; }
+.img-style-option:has(input:checked) {
+  border-color: var(--accent); background: var(--accent-dim); color: var(--accent-light);
 }
 .gen-image {
   max-width: 100%; border-radius: 10px;

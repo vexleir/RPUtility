@@ -400,20 +400,69 @@
 
   <!-- ── Image generation dialog ────────────────────────────────── -->
   <div class="rp-modal-backdrop" id="img-gen-modal" style="display:none" onclick="backdropClose(event,'img-gen-modal')">
-    <div class="rp-modal">
+    <div class="rp-modal rp-modal-wide">
       <div class="rp-modal-header">
         <h3>🎨 Generate Image</h3>
         <button class="rp-modal-close" onclick="closeModal('img-gen-modal')">✕</button>
       </div>
       <div class="rp-modal-body">
+
         <div class="form-group">
-          <label>Prompt</label>
-          <textarea id="img-gen-prompt" rows="3" placeholder="a moonlit forest path, fantasy art, detailed, atmospheric…" style="resize:vertical"></textarea>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <label style="margin:0">Prompt</label>
+            <button class="btn btn-secondary btn-sm" id="gen-prompt-btn" onclick="generateImagePrompt()">✨ Generate Prompt</button>
+          </div>
+          <textarea id="img-gen-prompt" rows="4" placeholder="Click ✨ Generate Prompt to auto-build from the current scene, or type manually…" style="resize:vertical"></textarea>
+          <div id="gen-prompt-status" style="font-size:12px;color:var(--text-muted);min-height:16px;margin-top:4px"></div>
         </div>
+
+        <div class="form-group">
+          <label>Art style</label>
+          <div class="img-style-grid">
+            <label class="img-style-option">
+              <input type="radio" name="img-style" value="" checked>
+              <span>None</span>
+            </label>
+            <label class="img-style-option">
+              <input type="radio" name="img-style" value="photorealistic, 8k, high detail, RAW photo, cinematic lighting, sharp focus">
+              <span>Realistic</span>
+            </label>
+            <label class="img-style-option">
+              <input type="radio" name="img-style" value="anime style, manga art, cel shading, vibrant colors, detailed illustration">
+              <span>Anime</span>
+            </label>
+            <label class="img-style-option">
+              <input type="radio" name="img-style" value="fantasy digital art, artstation, concept art, highly detailed, dramatic lighting, epic scene">
+              <span>Fantasy Art</span>
+            </label>
+            <label class="img-style-option">
+              <input type="radio" name="img-style" value="dark fantasy, grim, gritty, moody shadows, gothic atmosphere, ominous lighting">
+              <span>Dark Fantasy</span>
+            </label>
+            <label class="img-style-option">
+              <input type="radio" name="img-style" value="oil painting, classical fine art, rich textures, museum quality, old masters style">
+              <span>Oil Painting</span>
+            </label>
+            <label class="img-style-option">
+              <input type="radio" name="img-style" value="watercolor painting, soft edges, flowing colors, delicate brushwork, artistic">
+              <span>Watercolor</span>
+            </label>
+            <label class="img-style-option">
+              <input type="radio" name="img-style" value="digital painting, concept art, artstation trending, painterly brush strokes, detailed">
+              <span>Digital Painting</span>
+            </label>
+            <label class="img-style-option">
+              <input type="radio" name="img-style" value="cyberpunk, neon lights, futuristic city, rain-slicked streets, dark atmosphere, sci-fi">
+              <span>Cyberpunk</span>
+            </label>
+          </div>
+        </div>
+
         <div class="form-group">
           <label>Negative prompt</label>
-          <textarea id="img-gen-negative" rows="2" style="resize:vertical">lowres, bad anatomy, blurry, watermark</textarea>
+          <textarea id="img-gen-negative" rows="2" style="resize:vertical">lowres, bad anatomy, blurry, watermark, text, signature</textarea>
         </div>
+
         <div class="gen-settings-grid" style="grid-template-columns:1fr 1fr">
           <div class="form-group">
             <label>Width</label>
@@ -432,6 +481,7 @@
             </select>
           </div>
         </div>
+
         <div id="img-gen-status" style="font-size:13px;color:var(--text-muted);min-height:20px"></div>
       </div>
       <div class="rp-modal-footer">

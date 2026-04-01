@@ -1552,6 +1552,83 @@ async def api_comfyui_checkpoints(comfyui_url: str = "http://localhost:8188"):
         raise HTTPException(502, f"Could not reach ComfyUI: {e}")
 
 
+@app.post("/api/session/{session_id}/image-prompt")
+async def api_generate_image_prompt(session_id: str):
+    """Ask the LLM to build a Stable Diffusion optimised prompt from the current scene context."""
+    engine = get_engine()
+    session = _resolve(engine, session_id)
+
+    # ── Gather scene context ──────────────────────────────────────────────────
+    scene = engine.scene_mgr.get(session_id)
+    location = (scene.location if scene else None) or "Unknown"
+    summary = (scene.summary if scene else None) or "(no summary yet)"
+    active_chars = (scene.active_characters if scene else None) or []
+
+    memories = engine.get_memories(session_id)
+    mem_lines = [
+        f"- [{m.type.value}] {m.title}: {m.content}"
+        for m in memories[:30]
+    ]
+
+    rels = engine.get_relationships(session_id)
+    rel_lines = [
+        f"- {r.source_entity} → {r.target_entity}: trust={r.trust:+.1f} affection={r.affection:+.1f} hostility={r.hostility:.1f}"
+        for r in rels[:10]
+    ] if rels else []
+
+    turns = engine.sessions.get_turns(session_id, limit=6)
+    turns_chrono = list(reversed(turns))   # get_turns returns newest-first
+    recent_lines = [
+        f"{t.role.upper()}: {t.content[:400].replace(chr(10), ' ')}"
+        for t in turns_chrono
+    ]
+
+    # ── Build LLM request ─────────────────────────────────────────────────────
+    system = (
+        "You are an expert Stable Diffusion prompt engineer for roleplay scenes.\n\n"
+        "Your task: write a vivid SD image generation prompt that captures the current roleplay scene.\n\n"
+        "SD prompt format rules:\n"
+        "- Comma-separated descriptive tags and short phrases\n"
+        "- Lead with subject/composition (e.g. 'two figures in a dimly lit tavern')\n"
+        "- Include physical descriptions of each character present (hair color, eye color, clothing, expression, pose)\n"
+        "  If physical details are not explicitly stated, make a reasonable visual guess based on context\n"
+        "- Include environment, lighting, mood, atmosphere\n"
+        "- Do NOT include style tags — the user will add those separately\n"
+        "- Do NOT include negative prompt syntax\n"
+        "- Under 160 words total\n"
+        "- Output ONLY the raw prompt text — no labels, no preamble, no explanation"
+    )
+
+    parts = [
+        f"CHARACTER NAME: {session.character_name}",
+        f"LOCATION: {location}",
+        f"SCENE SUMMARY: {summary}",
+        f"PRESENT CHARACTERS: {', '.join(active_chars) if active_chars else 'unspecified'}",
+        "",
+        "MEMORY / CHARACTER DETAILS:",
+        "\n".join(mem_lines) if mem_lines else "(none yet)",
+        "",
+        "RELATIONSHIPS:",
+        "\n".join(rel_lines) if rel_lines else "(none yet)",
+        "",
+        "RECENT EXCHANGE:",
+        "\n".join(recent_lines) if recent_lines else "(none)",
+        "",
+        "Write the SD image prompt now.",
+    ]
+
+    try:
+        raw = engine.provider.generate(
+            "\n".join(parts),
+            system=system,
+            temperature=0.75,
+            max_tokens=350,
+        )
+        return {"prompt": raw.strip()}
+    except Exception as e:
+        raise HTTPException(500, f"Prompt generation failed: {e}")
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _resolve(engine: RoleplayEngine, session_id: str):
