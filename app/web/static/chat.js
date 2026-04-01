@@ -1350,6 +1350,13 @@ function clearBackground() {
 // ══════════════════════════════════════════════════════════════════════════════
 
 function openImageGenDialog() {
+  // Pre-fill with the current scene summary so the image reflects where
+  // the story is right now. The textarea remains fully editable.
+  const summary = document.getElementById("scene-summary")?.textContent?.trim();
+  const promptEl = document.getElementById("img-gen-prompt");
+  if (promptEl && summary && summary !== "(no summary yet)") {
+    promptEl.value = summary;
+  }
   openModal("img-gen-modal");
 }
 
