@@ -100,8 +100,8 @@ def parse_card(raw: dict) -> CharacterCard:
       - SillyTavern V1: flat dict with "name", "description", etc.
       - Our simplified format: same as V1 but with "first_message" already normalised
     """
-    # Unwrap SillyTavern V2 wrapper
-    if "spec" in raw and raw.get("spec") == "chara_card_v2":
+    # Unwrap SillyTavern V2/V3 wrapper (spec: "chara_card_v2", "chara_card_v3", etc.)
+    if "spec" in raw and str(raw.get("spec", "")).startswith("chara_card_v"):
         raw = raw.get("data", raw)
 
     # Normalise field names

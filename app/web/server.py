@@ -7,10 +7,14 @@ Start with: python -m app.main serve
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Optional
 
 import json
+
+# Cache-buster: changes every server restart so browsers always fetch fresh JS/CSS.
+_BOOT_TS = str(int(time.time()))
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse, Response
@@ -46,8 +50,11 @@ def get_engine() -> RoleplayEngine:
 
 
 def read_template(name: str, **substitutions: str) -> str:
-    """Read an HTML template and apply simple {{KEY}} substitutions."""
+    """Read an HTML template and apply simple {{KEY}} substitutions.
+    CACHE_VER is automatically injected so ?v={{CACHE_VER}} on static URLs
+    busts the browser cache on every server restart."""
     html = (TEMPLATES_DIR / name).read_text(encoding="utf-8")
+    substitutions.setdefault("CACHE_VER", _BOOT_TS)
     for key, value in substitutions.items():
         html = html.replace(f"{{{{{key}}}}}", value)
     return html
