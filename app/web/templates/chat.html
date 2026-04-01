@@ -6,6 +6,8 @@
   <title>RP Utility — Chat</title>
   <link rel="stylesheet" href="/static/style.css?v={{CACHE_VER}}">
   <script>window.__SESSION_ID__ = "{{SESSION_ID}}";</script>
+  <!-- marked.js for markdown rendering in AI messages -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
   <style>
     @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
   </style>
@@ -27,6 +29,9 @@
 
     <div class="chat-header-actions">
       <button class="btn btn-ghost btn-sm" id="search-toggle-btn" title="Search conversation">🔍</button>
+      <button class="btn btn-ghost btn-sm" onclick="openModal('persona-modal')" title="Player persona">👤</button>
+      <button class="btn btn-ghost btn-sm" onclick="openModal('gen-settings-modal')" title="Generation settings">⚙️</button>
+      <button class="btn btn-ghost btn-sm" onclick="openModal('bg-modal')" title="Chat background">🖼</button>
       <a href="/api/session/{{SESSION_ID}}/export" class="btn btn-ghost btn-sm" title="Export session as markdown" download>⬇</a>
       <a href="/chat/{{SESSION_ID}}/status" class="btn btn-ghost btn-sm" title="Session status &amp; inspection">📊 Status</a>
       <button class="btn btn-ghost btn-sm" onclick="refreshSidebar()" title="Refresh sidebar state">↺</button>
@@ -44,7 +49,7 @@
   </div>
 
   <!-- ── Body ────────────────────────────────────────────────────── -->
-  <div class="chat-body">
+  <div class="chat-body" id="chat-body">
 
     <!-- Messages + Input -->
     <div class="messages-col">
@@ -63,6 +68,7 @@
 
       <!-- Input area -->
       <div class="input-area">
+        <button class="btn btn-ghost btn-sm img-gen-btn" id="img-gen-btn" onclick="openImageGenDialog()" title="Generate image with ComfyUI">🎨</button>
         <textarea
           id="message-input"
           placeholder="Write your message… (Enter to send, Shift+Enter for newline)"
@@ -179,6 +185,261 @@
     </aside>
 
   </div><!-- end chat-body -->
+
+  <!-- ══════════════════════════════════════════════════════════════
+       MODALS
+  ══════════════════════════════════════════════════════════════ -->
+
+  <!-- ── Persona modal ──────────────────────────────────────────── -->
+  <div class="rp-modal-backdrop" id="persona-modal" onclick="backdropClose(event,'persona-modal')">
+    <div class="rp-modal">
+      <div class="rp-modal-header">
+        <h3>👤 Player Persona</h3>
+        <button class="rp-modal-close" onclick="closeModal('persona-modal')">✕</button>
+      </div>
+      <div class="rp-modal-body">
+        <div class="form-group">
+          <label>Your name in chat</label>
+          <input type="text" id="persona-name-input" placeholder="Player" maxlength="40">
+        </div>
+        <div class="form-group">
+          <label>Avatar image (optional)</label>
+          <div class="avatar-upload-area">
+            <div class="avatar-preview-lg" id="persona-avatar-preview"></div>
+            <div style="display:flex;gap:8px;margin-top:8px">
+              <input type="file" id="persona-avatar-file" accept="image/*" style="display:none" onchange="handlePersonaAvatarFile(this)">
+              <button class="btn btn-secondary btn-sm" onclick="document.getElementById('persona-avatar-file').click()">Upload image</button>
+              <button class="btn btn-ghost btn-sm" onclick="clearPersonaAvatar()">Clear</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="rp-modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('persona-modal')">Cancel</button>
+        <button class="btn btn-primary" onclick="savePersona()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Generation settings modal ──────────────────────────────── -->
+  <div class="rp-modal-backdrop" id="gen-settings-modal" onclick="backdropClose(event,'gen-settings-modal')">
+    <div class="rp-modal rp-modal-wide">
+      <div class="rp-modal-header">
+        <h3>⚙️ Generation Settings</h3>
+        <button class="rp-modal-close" onclick="closeModal('gen-settings-modal')">✕</button>
+      </div>
+      <div class="rp-modal-body">
+        <p class="form-hint" style="margin-bottom:16px">These override the server defaults for every message you send. Leave a field at its default to use the server config.</p>
+
+        <div class="gen-settings-grid">
+
+          <div class="gen-setting-row">
+            <div class="gen-setting-label">
+              <span>Temperature</span>
+              <span class="gen-setting-value" id="lbl-temperature">0.80</span>
+            </div>
+            <input type="range" id="sl-temperature" min="0" max="2" step="0.05" value="0.80"
+              oninput="syncLabel('temperature',this.value,2)">
+            <div class="gen-setting-bounds"><span>0</span><span>2</span></div>
+            <p class="form-hint">Controls randomness. Higher = more creative, lower = more focused.</p>
+          </div>
+
+          <div class="gen-setting-row">
+            <div class="gen-setting-label">
+              <span>Top-P</span>
+              <span class="gen-setting-value" id="lbl-top_p">0.95</span>
+            </div>
+            <input type="range" id="sl-top_p" min="0" max="1" step="0.01" value="0.95"
+              oninput="syncLabel('top_p',this.value,2)">
+            <div class="gen-setting-bounds"><span>0</span><span>1</span></div>
+            <p class="form-hint">Nucleus sampling. Keeps tokens whose cumulative probability ≤ this.</p>
+          </div>
+
+          <div class="gen-setting-row">
+            <div class="gen-setting-label">
+              <span>Top-K</span>
+              <span class="gen-setting-value" id="lbl-top_k">0</span>
+            </div>
+            <input type="range" id="sl-top_k" min="0" max="200" step="1" value="0"
+              oninput="syncLabel('top_k',this.value,0)">
+            <div class="gen-setting-bounds"><span>0 (off)</span><span>200</span></div>
+            <p class="form-hint">Limit sampling to top-K tokens each step. 0 = disabled.</p>
+          </div>
+
+          <div class="gen-setting-row">
+            <div class="gen-setting-label">
+              <span>Min-P</span>
+              <span class="gen-setting-value" id="lbl-min_p">0.05</span>
+            </div>
+            <input type="range" id="sl-min_p" min="0" max="1" step="0.01" value="0.05"
+              oninput="syncLabel('min_p',this.value,2)">
+            <div class="gen-setting-bounds"><span>0 (off)</span><span>1</span></div>
+            <p class="form-hint">Minimum token probability relative to the top token. 0 = disabled.</p>
+          </div>
+
+          <div class="gen-setting-row">
+            <div class="gen-setting-label">
+              <span>Repeat Penalty</span>
+              <span class="gen-setting-value" id="lbl-repeat_penalty">1.10</span>
+            </div>
+            <input type="range" id="sl-repeat_penalty" min="1" max="1.5" step="0.01" value="1.10"
+              oninput="syncLabel('repeat_penalty',this.value,2)">
+            <div class="gen-setting-bounds"><span>1 (off)</span><span>1.5</span></div>
+            <p class="form-hint">Penalises repeating recent tokens. 1.0 = no penalty.</p>
+          </div>
+
+          <div class="gen-setting-row">
+            <div class="gen-setting-label">
+              <span>Max Tokens</span>
+              <span class="gen-setting-value" id="lbl-max_tokens">1024</span>
+            </div>
+            <input type="range" id="sl-max_tokens" min="64" max="8192" step="64" value="1024"
+              oninput="syncLabel('max_tokens',this.value,0)">
+            <div class="gen-setting-bounds"><span>64</span><span>8192</span></div>
+            <p class="form-hint">Maximum number of tokens the model will generate per response.</p>
+          </div>
+
+          <div class="gen-setting-row">
+            <div class="gen-setting-label">
+              <span>Seed</span>
+              <span class="gen-setting-value" id="lbl-seed">-1</span>
+            </div>
+            <input type="range" id="sl-seed" min="-1" max="999999999" step="1" value="-1"
+              oninput="syncLabel('seed',this.value,0)">
+            <div class="gen-setting-bounds"><span>-1 (random)</span><span>999 999 999</span></div>
+            <p class="form-hint">-1 = random seed every time. Fixed seed = reproducible output.</p>
+          </div>
+
+        </div><!-- gen-settings-grid -->
+
+        <!-- ComfyUI sub-section -->
+        <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+          <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:12px">🎨 ComfyUI Image Generation</div>
+          <div class="form-group">
+            <label>ComfyUI URL</label>
+            <input type="text" id="comfyui-url-input" value="http://localhost:8188" placeholder="http://localhost:8188">
+          </div>
+          <div class="form-group">
+            <label>Default checkpoint <span class="form-hint" style="display:inline">(leave empty to auto-detect)</span></label>
+            <div style="display:flex;gap:8px">
+              <input type="text" id="comfyui-checkpoint-input" placeholder="v1-5-pruned-emaonly.ckpt">
+              <button class="btn btn-secondary btn-sm" onclick="fetchComfyCheckpoints()" style="flex-shrink:0">Fetch list</button>
+            </div>
+            <div id="comfyui-checkpoint-list" style="margin-top:6px;font-size:12px;color:var(--text-dim)"></div>
+          </div>
+          <div class="gen-settings-grid" style="grid-template-columns:1fr 1fr">
+            <div class="gen-setting-row">
+              <div class="gen-setting-label"><span>Steps</span><span class="gen-setting-value" id="lbl-comfy-steps">20</span></div>
+              <input type="range" id="sl-comfy-steps" min="1" max="60" step="1" value="20" oninput="syncLabelDirect('comfy-steps',this.value)">
+              <div class="gen-setting-bounds"><span>1</span><span>60</span></div>
+            </div>
+            <div class="gen-setting-row">
+              <div class="gen-setting-label"><span>CFG Scale</span><span class="gen-setting-value" id="lbl-comfy-cfg">7.0</span></div>
+              <input type="range" id="sl-comfy-cfg" min="1" max="20" step="0.5" value="7" oninput="syncLabelDirect('comfy-cfg',this.value)">
+              <div class="gen-setting-bounds"><span>1</span><span>20</span></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+      <div class="rp-modal-footer">
+        <button class="btn btn-ghost" onclick="resetGenSettings()">Reset defaults</button>
+        <button class="btn btn-secondary" onclick="closeModal('gen-settings-modal')">Cancel</button>
+        <button class="btn btn-primary" onclick="saveGenSettings()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Background modal ───────────────────────────────────────── -->
+  <div class="rp-modal-backdrop" id="bg-modal" onclick="backdropClose(event,'bg-modal')">
+    <div class="rp-modal">
+      <div class="rp-modal-header">
+        <h3>🖼 Chat Background</h3>
+        <button class="rp-modal-close" onclick="closeModal('bg-modal')">✕</button>
+      </div>
+      <div class="rp-modal-body">
+        <div class="form-group">
+          <label>Upload image</label>
+          <input type="file" id="bg-file-input" accept="image/*" onchange="handleBgFile(this)" style="display:none">
+          <button class="btn btn-secondary btn-sm" onclick="document.getElementById('bg-file-input').click()">Choose file…</button>
+        </div>
+        <div class="form-group">
+          <label>or paste image URL</label>
+          <div style="display:flex;gap:8px">
+            <input type="text" id="bg-url-input" placeholder="https://…">
+            <button class="btn btn-secondary btn-sm" onclick="applyBgUrl()" style="flex-shrink:0">Apply</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Presets</label>
+          <div class="bg-presets">
+            <div class="bg-preset" style="background:linear-gradient(135deg,#0d0d1a,#1a1a38)" onclick="applyBgGradient('linear-gradient(135deg,#0d0d1a,#1a1a38)')">Dark Purple</div>
+            <div class="bg-preset" style="background:linear-gradient(135deg,#0a1628,#1e3a5f)" onclick="applyBgGradient('linear-gradient(135deg,#0a1628,#1e3a5f)')">Deep Ocean</div>
+            <div class="bg-preset" style="background:linear-gradient(135deg,#1a0d0d,#3f1f1f)" onclick="applyBgGradient('linear-gradient(135deg,#1a0d0d,#3f1f1f)')">Crimson Dark</div>
+            <div class="bg-preset" style="background:linear-gradient(135deg,#0d1a0d,#1f3f1f)" onclick="applyBgGradient('linear-gradient(135deg,#0d1a0d,#1f3f1f)')">Forest Night</div>
+            <div class="bg-preset" style="background:linear-gradient(135deg,#1a1a0d,#3f3f1f)" onclick="applyBgGradient('linear-gradient(135deg,#1a1a0d,#3f3f1f)')">Old Parchment</div>
+            <div class="bg-preset" style="background:#0d0d0d" onclick="applyBgGradient('#0d0d0d')">Pure Black</div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Opacity overlay</label>
+          <div style="display:flex;align-items:center;gap:10px">
+            <input type="range" id="bg-overlay-slider" min="0" max="0.9" step="0.05" value="0.5"
+              oninput="applyBgOverlay(this.value)" style="flex:1">
+            <span id="bg-overlay-label" style="font-size:12px;width:36px;text-align:right">0.50</span>
+          </div>
+          <p class="form-hint">Dark overlay on top of the background to keep text readable.</p>
+        </div>
+      </div>
+      <div class="rp-modal-footer">
+        <button class="btn btn-ghost" onclick="clearBackground()">Clear background</button>
+        <button class="btn btn-primary" onclick="closeModal('bg-modal')">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Image generation dialog ────────────────────────────────── -->
+  <div class="rp-modal-backdrop" id="img-gen-modal" onclick="backdropClose(event,'img-gen-modal')">
+    <div class="rp-modal">
+      <div class="rp-modal-header">
+        <h3>🎨 Generate Image</h3>
+        <button class="rp-modal-close" onclick="closeModal('img-gen-modal')">✕</button>
+      </div>
+      <div class="rp-modal-body">
+        <div class="form-group">
+          <label>Prompt</label>
+          <textarea id="img-gen-prompt" rows="3" placeholder="a moonlit forest path, fantasy art, detailed, atmospheric…" style="resize:vertical"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Negative prompt</label>
+          <textarea id="img-gen-negative" rows="2" style="resize:vertical">lowres, bad anatomy, blurry, watermark</textarea>
+        </div>
+        <div class="gen-settings-grid" style="grid-template-columns:1fr 1fr">
+          <div class="form-group">
+            <label>Width</label>
+            <select id="img-gen-width">
+              <option value="512" selected>512</option>
+              <option value="768">768</option>
+              <option value="1024">1024</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Height</label>
+            <select id="img-gen-height">
+              <option value="512" selected>512</option>
+              <option value="768">768</option>
+              <option value="1024">1024</option>
+            </select>
+          </div>
+        </div>
+        <div id="img-gen-status" style="font-size:13px;color:var(--text-muted);min-height:20px"></div>
+      </div>
+      <div class="rp-modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('img-gen-modal')">Cancel</button>
+        <button class="btn btn-primary" id="img-gen-submit-btn" onclick="submitImageGen()">Generate</button>
+      </div>
+    </div>
+  </div>
 
   <script src="/static/chat.js?v={{CACHE_VER}}"></script>
 

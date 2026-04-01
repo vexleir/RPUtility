@@ -16,7 +16,14 @@
       "Bash(python -c \"from app.web.server import app; from app.cards.loader import load_all_cards, extract_png_chara, load_card_from_png; from app.lorebooks.loader import load_lorebook_from_png; print\\('OK'\\)\")",
       "Bash(python -c ':*)",
       "Bash(grep -h \"static/\" \"c:/Antigravity Projects/RP Utility/app/web/templates/\"*.html)",
-      "Bash(node --check app/web/static/chat.js)"
+      "Bash(node --check app/web/static/chat.js)",
+      "Bash(node --check \"c:/Antigravity Projects/RP Utility/app/web/static/chat.js\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app/web/server.py'\\).read\\(\\)\\); print\\('server.py OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app/core/engine.py'\\).read\\(\\)\\); print\\('engine.py OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app/providers/ollama.py'\\).read\\(\\)\\); print\\('ollama.py OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app/web/server.py', encoding='utf-8'\\).read\\(\\)\\); print\\('server.py OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app/core/engine.py', encoding='utf-8'\\).read\\(\\)\\); print\\('engine.py OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app/providers/ollama.py', encoding='utf-8'\\).read\\(\\)\\); print\\('ollama.py OK'\\)\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\devio\\.claude\\projects\\c--Antigravity-Projects-RP-Utility\\memory"

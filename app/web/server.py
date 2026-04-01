@@ -72,6 +72,26 @@ class CreateSessionRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    # Optional per-request generation overrides (from the settings panel)
+    temperature: Optional[float] = None
+    top_k: Optional[int] = None
+    top_p: Optional[float] = None
+    min_p: Optional[float] = None
+    repeat_penalty: Optional[float] = None
+    max_tokens: Optional[int] = None
+    seed: Optional[int] = None
+
+    def gen_params(self) -> dict:
+        """Return only the overrides that were explicitly set."""
+        return {k: v for k, v in {
+            "temperature": self.temperature,
+            "top_k": self.top_k,
+            "top_p": self.top_p,
+            "min_p": self.min_p,
+            "repeat_penalty": self.repeat_penalty,
+            "max_tokens": self.max_tokens,
+            "seed": self.seed,
+        }.items() if v is not None}
 
 
 class UpdateSceneRequest(BaseModel):
@@ -617,7 +637,7 @@ def api_chat_stream(session_id: str, req: ChatRequest):
 
     def event_generator():
         try:
-            for item in engine.chat_stream(session_id, req.message):
+            for item in engine.chat_stream(session_id, req.message, gen_params=req.gen_params()):
                 if isinstance(item, str):
                     # Text token — send as SSE data
                     yield f"data: {json.dumps({'token': item})}\n\n"
@@ -777,7 +797,7 @@ def api_regenerate(session_id: str, req: RegenerateRequest):
 
     def event_generator():
         try:
-            for item in engine.chat_stream(session_id, req.message):
+            for item in engine.chat_stream(session_id, req.message, gen_params=req.gen_params()):
                 if isinstance(item, str):
                     yield f"data: {json.dumps({'token': item})}\n\n"
                 else:
@@ -1417,6 +1437,119 @@ def api_delete_lore_note(session_id: str, note_id: str):
     engine = get_engine()
     _resolve(engine, session_id)
     engine.delete_lore_note(note_id)
+
+
+# ── ComfyUI image generation proxy ───────────────────────────────────────────
+
+class ComfyUIGenerateRequest(BaseModel):
+    prompt: str
+    negative_prompt: str = "lowres, bad anatomy, blurry, watermark"
+    width: int = 512
+    height: int = 512
+    steps: int = 20
+    cfg: float = 7.0
+    checkpoint: str = ""          # empty = auto-detect first available
+    comfyui_url: str = "http://localhost:8188"
+
+
+@app.post("/api/comfyui/generate")
+async def api_comfyui_generate(req: ComfyUIGenerateRequest):
+    """Proxy image generation to a locally running ComfyUI instance."""
+    import asyncio
+    import base64
+    import random
+
+    base = req.comfyui_url.rstrip("/")
+
+    async with __import__("httpx").AsyncClient(timeout=10.0) as client:
+        # ── Resolve checkpoint ──────────────────────────────────────────
+        checkpoint = req.checkpoint
+        if not checkpoint:
+            try:
+                r = await client.get(f"{base}/object_info/CheckpointLoaderSimple")
+                r.raise_for_status()
+                info = r.json()
+                ckpts = info.get("CheckpointLoaderSimple", {}).get(
+                    "input", {}).get("required", {}).get("ckpt_name", [[]])[0]
+                checkpoint = ckpts[0] if ckpts else ""
+            except Exception as e:
+                raise HTTPException(502, f"Could not reach ComfyUI at {base}: {e}")
+        if not checkpoint:
+            raise HTTPException(400, "No checkpoint found in ComfyUI. Load a model first.")
+
+        # ── Build workflow ──────────────────────────────────────────────
+        seed = random.randint(0, 2**32 - 1)
+        workflow = {
+            "4": {"class_type": "CheckpointLoaderSimple",
+                  "inputs": {"ckpt_name": checkpoint}},
+            "5": {"class_type": "EmptyLatentImage",
+                  "inputs": {"width": req.width, "height": req.height, "batch_size": 1}},
+            "6": {"class_type": "CLIPTextEncode",
+                  "inputs": {"text": req.prompt, "clip": ["4", 1]}},
+            "7": {"class_type": "CLIPTextEncode",
+                  "inputs": {"text": req.negative_prompt, "clip": ["4", 1]}},
+            "3": {"class_type": "KSampler",
+                  "inputs": {"model": ["4", 0], "positive": ["6", 0], "negative": ["7", 0],
+                             "latent_image": ["5", 0], "seed": seed, "steps": req.steps,
+                             "cfg": req.cfg, "sampler_name": "euler",
+                             "scheduler": "normal", "denoise": 1.0}},
+            "8": {"class_type": "VAEDecode",
+                  "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
+            "9": {"class_type": "SaveImage",
+                  "inputs": {"images": ["8", 0], "filename_prefix": "rpu"}},
+        }
+
+        # ── Queue prompt ────────────────────────────────────────────────
+        try:
+            r = await client.post(f"{base}/prompt", json={"prompt": workflow}, timeout=15.0)
+            r.raise_for_status()
+            prompt_id = r.json()["prompt_id"]
+        except Exception as e:
+            raise HTTPException(502, f"ComfyUI queue error: {e}")
+
+        # ── Poll history ────────────────────────────────────────────────
+        async with __import__("httpx").AsyncClient(timeout=300.0) as poll_client:
+            for _ in range(180):     # up to ~3 min
+                await asyncio.sleep(1)
+                try:
+                    hr = await poll_client.get(f"{base}/history/{prompt_id}")
+                    history = hr.json()
+                    if prompt_id in history:
+                        outputs = history[prompt_id].get("outputs", {})
+                        for node_id, node_out in outputs.items():
+                            for img in node_out.get("images", []):
+                                filename = img["filename"]
+                                subfolder = img.get("subfolder", "")
+                                img_type  = img.get("type", "output")
+                                params = f"filename={filename}&type={img_type}"
+                                if subfolder:
+                                    params += f"&subfolder={subfolder}"
+                                img_r = await poll_client.get(f"{base}/view?{params}")
+                                img_r.raise_for_status()
+                                b64 = base64.b64encode(img_r.content).decode()
+                                ct = img_r.headers.get("content-type", "image/png")
+                                return {"data_url": f"data:{ct};base64,{b64}",
+                                        "filename": filename}
+                except Exception:
+                    pass
+
+    raise HTTPException(504, "ComfyUI did not finish generating within the timeout.")
+
+
+@app.get("/api/comfyui/checkpoints")
+async def api_comfyui_checkpoints(comfyui_url: str = "http://localhost:8188"):
+    """Return the list of available checkpoints from ComfyUI."""
+    base = comfyui_url.rstrip("/")
+    try:
+        async with __import__("httpx").AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{base}/object_info/CheckpointLoaderSimple")
+            r.raise_for_status()
+            info = r.json()
+            ckpts = info.get("CheckpointLoaderSimple", {}).get(
+                "input", {}).get("required", {}).get("ckpt_name", [[]])[0]
+            return {"checkpoints": ckpts}
+    except Exception as e:
+        raise HTTPException(502, f"Could not reach ComfyUI: {e}")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

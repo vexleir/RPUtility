@@ -3,6 +3,20 @@
 const $ = (sel, ctx = document) => ctx.querySelector(sel);
 const $$ = (sel, ctx = document) => [...ctx.querySelectorAll(sel)];
 
+/* chat.js — roleplay chat interface */
+
+// ── Configure marked.js ───────────────────────────────────────────────────────
+if (typeof marked !== "undefined") {
+  marked.setOptions({ breaks: true, gfm: true });
+}
+function renderMarkdown(text) {
+  if (typeof marked === "undefined") return escHtml(text);
+  try { return marked.parse(text); } catch { return escHtml(text); }
+}
+function escHtml(t) {
+  return t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
 // ── State ─────────────────────────────────────────────────────────────────────
 const SESSION_ID = window.__SESSION_ID__;   // injected by server
 let session = null;
@@ -11,6 +25,7 @@ let memoriesExpanded = false;
 let elapsedTimer = null;    // interval ID for the elapsed-time counter
 let _bookmarkedTurnIds = new Set();  // set of bookmarked turn IDs for O(1) lookup
 let _allTurns = [];          // lightweight turn list (id + role only) for search/regen
+let _charAvatarUrl = null;  // card image URL for the AI character
 
 // ── DOM cap — maximum messages kept rendered at once ──────────────────────────
 const MAX_DOM_MESSAGES = 60;
@@ -27,6 +42,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupSidebarCollapse();
   await refreshSidebar();
   loadRecap();
+  applyStoredBackground();
+  loadGenSettings();
+  loadPersona();
   scrollToBottom();
 });
 
@@ -43,6 +61,17 @@ async function loadSession() {
     $("#model-badge").textContent = session.model_name || "default model";
     if (session.scene?.location) {
       $("#location-badge").textContent = "📍 " + session.scene.location;
+    }
+
+    // Try to load the character's card image (PNG cards carry one)
+    if (session.character_name) {
+      try {
+        const imgRes = await fetch(`/api/cards/${encodeURIComponent(session.character_name)}/image`);
+        if (imgRes.ok) {
+          const blob = await imgRes.blob();
+          _charAvatarUrl = URL.createObjectURL(blob);
+        }
+      } catch { /* no image — use letter fallback */ }
     }
   } catch (err) {
     showError("Could not load session: " + err.message);
@@ -199,7 +228,7 @@ async function sendMessage() {
     const res = await fetch(`/api/session/${SESSION_ID}/chat/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text }),
+      body: JSON.stringify({ message: text, ..._getGenParams() }),
     });
 
     if (!res.ok) {
@@ -262,7 +291,7 @@ async function sendMessage() {
           if (payload.scene?.location) {
             $("#location-badge").textContent = "📍 " + payload.scene.location;
           }
-          finalizeStreamingMessage(bubble);
+          finalizeStreamingMessage(bubble, fullText);
           hideError();
           // Reload turns to get server-assigned IDs then attach regenerate button
           reloadTurnsQuietly();
@@ -286,11 +315,32 @@ async function sendMessage() {
 }
 
 // ── Message rendering ─────────────────────────────────────────────────────────
+function _buildAvatarEl(role) {
+  const el = document.createElement("div");
+  el.className = "msg-avatar";
+  if (role === "assistant" && _charAvatarUrl) {
+    const img = document.createElement("img");
+    img.src = _charAvatarUrl;
+    img.alt = session?.character_name ?? "Character";
+    el.appendChild(img);
+  } else if (role === "user") {
+    const persona = _getPersona();
+    if (persona.avatarDataUrl) {
+      const img = document.createElement("img");
+      img.src = persona.avatarDataUrl;
+      img.alt = persona.name || "You";
+      el.appendChild(img);
+    } else {
+      el.textContent = (persona.name?.[0] ?? "Y").toUpperCase();
+    }
+  } else {
+    el.textContent = (session?.character_name?.[0] ?? "?").toUpperCase();
+  }
+  return el;
+}
+
 function _buildMessageDiv(role, content, timestamp = null, animate = false, turnId = null) {
   const isAssistant = role === "assistant";
-  const avatar = isAssistant
-    ? (session?.character_name?.[0] ?? "?").toUpperCase()
-    : "You";
   const time = timestamp
     ? new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -302,17 +352,31 @@ function _buildMessageDiv(role, content, timestamp = null, animate = false, turn
   div.className = `message ${role}`;
   if (turnId) div.dataset.turnId = turnId;
   if (animate) div.style.animation = "fadeIn 0.2s ease";
-  div.innerHTML = `
-    <div class="msg-avatar">${esc(avatar)}</div>
-    <div style="flex:1;min-width:0">
-      <div class="msg-bubble">${esc(content)}</div>
-      <div class="msg-meta">
-        <span>${time}</span>
-        <span class="msg-actions">
-          ${turnId ? `<button class="msg-action-btn bookmark-btn ${starClass}" title="Bookmark this moment" onclick="toggleBookmark('${turnId}', this)">${starIcon}</button>` : ""}
-        </span>
-      </div>
-    </div>`;
+
+  const avatarEl = _buildAvatarEl(role);
+
+  const bubble = document.createElement("div");
+  bubble.className = "msg-bubble";
+  if (isAssistant) {
+    bubble.innerHTML = renderMarkdown(content);
+    bubble.classList.add("md-content");
+  } else {
+    bubble.textContent = content;
+  }
+
+  const metaEl = document.createElement("div");
+  metaEl.className = "msg-meta";
+  metaEl.innerHTML = `<span>${time}</span><span class="msg-actions">${
+    turnId ? `<button class="msg-action-btn bookmark-btn ${starClass}" title="Bookmark this moment" onclick="toggleBookmark('${esc(turnId)}', this)">${starIcon}</button>` : ""
+  }</span>`;
+
+  const inner = document.createElement("div");
+  inner.style.cssText = "flex:1;min-width:0";
+  inner.appendChild(bubble);
+  inner.appendChild(metaEl);
+
+  div.appendChild(avatarEl);
+  div.appendChild(inner);
   return div;
 }
 
@@ -325,28 +389,38 @@ function appendMessage(role, content, timestamp = null, animate = true, turnId =
 // ── Streaming message helpers ─────────────────────────────────────────────────
 function appendStreamingMessage() {
   const area = $("#messages-area");
-  const avatar = (session?.character_name?.[0] ?? "?").toUpperCase();
   const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
   const div = document.createElement("div");
   div.className = "message assistant";
   div.style.animation = "fadeIn 0.2s ease";
-  div.innerHTML = `
-    <div class="msg-avatar">${esc(avatar)}</div>
-    <div>
-      <div class="msg-bubble"></div>
-      <div class="msg-meta">${time}</div>
-    </div>`;
+
+  div.appendChild(_buildAvatarEl("assistant"));
+
+  const inner = document.createElement("div");
+  const bubble = document.createElement("div");
+  bubble.className = "msg-bubble";
+  const meta = document.createElement("div");
+  meta.className = "msg-meta";
+  meta.textContent = time;
+  inner.appendChild(bubble);
+  inner.appendChild(meta);
+  div.appendChild(inner);
+
   area.appendChild(div);
-  return div.querySelector(".msg-bubble");
+  return bubble;
 }
 
 function appendToStreamingMessage(bubble, token) {
   bubble.appendChild(document.createTextNode(token));
 }
 
-function finalizeStreamingMessage(bubble) {
-  // Text nodes are already in place — nothing extra needed.
+function finalizeStreamingMessage(bubble, fullText) {
+  // Convert accumulated plain text to rendered markdown
+  if (fullText && typeof marked !== "undefined") {
+    bubble.innerHTML = renderMarkdown(fullText);
+    bubble.classList.add("md-content");
+  }
 }
 
 // ── Typing indicator ──────────────────────────────────────────────────────────
@@ -734,7 +808,7 @@ async function regenerateResponse(originalMessage) {
         const payload = JSON.parse(line.slice(6));
         if (payload.error) throw new Error(payload.error);
         if (payload.token !== undefined) { fullText += payload.token; appendToStreamingMessage(bubble, payload.token); scheduleScroll2(); }
-        if (payload.done) { finalizeStreamingMessage(bubble); reloadTurnsQuietly(); scheduleBackgroundRefresh(); break outer; }
+        if (payload.done) { finalizeStreamingMessage(bubble, fullText); reloadTurnsQuietly(); scheduleBackgroundRefresh(); break outer; }
       }
     }
   } catch (err) {
@@ -996,4 +1070,398 @@ function esc(str) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PERSONA
+// ══════════════════════════════════════════════════════════════════════════════
+
+const PERSONA_KEY = "rp_persona";
+
+function _getPersona() {
+  try { return JSON.parse(localStorage.getItem(PERSONA_KEY)) || {}; } catch { return {}; }
+}
+
+function loadPersona() {
+  const p = _getPersona();
+  const nameEl = document.getElementById("persona-name-input");
+  if (nameEl && p.name) nameEl.value = p.name;
+  _renderPersonaPreview(p.avatarDataUrl);
+}
+
+function _renderPersonaPreview(dataUrl) {
+  const el = document.getElementById("persona-avatar-preview");
+  if (!el) return;
+  if (dataUrl) {
+    el.innerHTML = `<img src="${dataUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`;
+  } else {
+    const p = _getPersona();
+    el.textContent = (p.name || "Y")[0].toUpperCase();
+    el.innerHTML = ""; // reset
+    el.textContent = (p.name || "Y")[0].toUpperCase();
+  }
+}
+
+function handlePersonaAvatarFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => _renderPersonaPreview(e.target.result);
+  reader.readAsDataURL(file);
+}
+
+function clearPersonaAvatar() {
+  const fi = document.getElementById("persona-avatar-file");
+  if (fi) fi.value = "";
+  _renderPersonaPreview(null);
+}
+
+function savePersona() {
+  const nameEl = document.getElementById("persona-name-input");
+  const name = nameEl ? nameEl.value.trim() || "Player" : "Player";
+  const fileInput = document.getElementById("persona-avatar-file");
+  const existing = _getPersona();
+
+  function persist(dataUrl) {
+    localStorage.setItem(PERSONA_KEY, JSON.stringify({ name, avatarDataUrl: dataUrl || null }));
+    closeModal("persona-modal");
+  }
+
+  if (fileInput && fileInput.files[0]) {
+    const reader = new FileReader();
+    reader.onload = e => persist(e.target.result);
+    reader.readAsDataURL(fileInput.files[0]);
+  } else {
+    persist(existing.avatarDataUrl || null);
+  }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// GENERATION SETTINGS
+// ══════════════════════════════════════════════════════════════════════════════
+
+const GEN_SETTINGS_KEY = "rp_gen_settings";
+const GEN_DEFAULTS = {
+  temperature: 0.80, top_p: 0.95, top_k: 0, min_p: 0.05,
+  repeat_penalty: 1.10, max_tokens: 1024, seed: -1,
+};
+const COMFY_DEFAULTS = {
+  comfyui_url: "http://localhost:8188", checkpoint: "",
+  steps: 20, cfg: 7.0,
+};
+
+function _getGenSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(GEN_SETTINGS_KEY)) || {};
+    return { ...GEN_DEFAULTS, ...saved };
+  } catch { return { ...GEN_DEFAULTS }; }
+}
+
+function _getComfySettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(GEN_SETTINGS_KEY)) || {};
+    return { ...COMFY_DEFAULTS, ...(saved.comfy || {}) };
+  } catch { return { ...COMFY_DEFAULTS }; }
+}
+
+function _getGenParams() {
+  const s = _getGenSettings();
+  const params = {};
+  params.temperature    = s.temperature;
+  params.top_p          = s.top_p;
+  params.max_tokens     = s.max_tokens;
+  if (s.top_k > 0)            params.top_k          = s.top_k;
+  if (s.min_p > 0)            params.min_p          = s.min_p;
+  if (s.repeat_penalty !== 1) params.repeat_penalty  = s.repeat_penalty;
+  if (s.seed >= 0)            params.seed            = s.seed;
+  return params;
+}
+
+function syncLabel(key, value, decimals) {
+  const el = document.getElementById("lbl-" + key);
+  if (el) el.textContent = parseFloat(value).toFixed(decimals);
+}
+
+function syncLabelDirect(id, value) {
+  const el = document.getElementById("lbl-" + id);
+  if (el) {
+    const v = parseFloat(value);
+    el.textContent = Number.isInteger(v) ? String(v) : v.toFixed(1);
+  }
+}
+
+function loadGenSettings() {
+  const s = _getGenSettings();
+  const pairs = [
+    ["temperature", 2], ["top_p", 2], ["top_k", 0],
+    ["min_p", 2], ["repeat_penalty", 2], ["max_tokens", 0], ["seed", 0],
+  ];
+  for (const [key, dec] of pairs) {
+    const slider = document.getElementById("sl-" + key);
+    if (slider) {
+      slider.value = s[key];
+      syncLabel(key, s[key], dec);
+    }
+  }
+  const c = _getComfySettings();
+  const urlEl = document.getElementById("comfyui-url-input");
+  if (urlEl) urlEl.value = c.comfyui_url;
+  const ckEl = document.getElementById("comfyui-checkpoint-input");
+  if (ckEl) ckEl.value = c.checkpoint;
+  const stepsEl = document.getElementById("sl-comfy-steps");
+  if (stepsEl) { stepsEl.value = c.steps; syncLabelDirect("comfy-steps", c.steps); }
+  const cfgEl = document.getElementById("sl-comfy-cfg");
+  if (cfgEl) { cfgEl.value = c.cfg; syncLabelDirect("comfy-cfg", c.cfg); }
+}
+
+function saveGenSettings() {
+  const v = id => parseFloat(document.getElementById("sl-" + id).value);
+  const settings = {
+    temperature:    v("temperature"),
+    top_p:          v("top_p"),
+    top_k:          v("top_k"),
+    min_p:          v("min_p"),
+    repeat_penalty: v("repeat_penalty"),
+    max_tokens:     v("max_tokens"),
+    seed:           v("seed"),
+    comfy: {
+      comfyui_url: document.getElementById("comfyui-url-input").value || "http://localhost:8188",
+      checkpoint:  document.getElementById("comfyui-checkpoint-input").value || "",
+      steps:       v("comfy-steps"),
+      cfg:         v("comfy-cfg"),
+    },
+  };
+  localStorage.setItem(GEN_SETTINGS_KEY, JSON.stringify(settings));
+  closeModal("gen-settings-modal");
+}
+
+function resetGenSettings() {
+  localStorage.removeItem(GEN_SETTINGS_KEY);
+  loadGenSettings();
+}
+
+async function fetchComfyCheckpoints() {
+  const urlEl = document.getElementById("comfyui-url-input");
+  const url = (urlEl ? urlEl.value : "") || "http://localhost:8188";
+  const listEl = document.getElementById("comfyui-checkpoint-list");
+  if (listEl) listEl.textContent = "Fetching…";
+  try {
+    const res = await fetch("/api/comfyui/checkpoints?comfyui_url=" + encodeURIComponent(url));
+    const data = await res.json();
+    if (data.checkpoints && data.checkpoints.length) {
+      if (listEl) listEl.innerHTML = data.checkpoints.map(c =>
+        "<a href='#' style='display:block;padding:2px 0' onclick=\"document.getElementById('comfyui-checkpoint-input').value='" +
+        c.replace(/'/g, "\\'") + "';return false\">" + esc(c) + "</a>"
+      ).join("");
+    } else {
+      if (listEl) listEl.textContent = "No checkpoints found.";
+    }
+  } catch {
+    if (listEl) listEl.textContent = "Could not reach ComfyUI.";
+  }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CHAT BACKGROUND
+// ══════════════════════════════════════════════════════════════════════════════
+
+const BG_KEY = "rp_bg_" + SESSION_ID;
+const BG_OVERLAY_KEY = "rp_bg_overlay_" + SESSION_ID;
+
+function applyStoredBackground() {
+  const bg = localStorage.getItem(BG_KEY);
+  const overlay = parseFloat(localStorage.getItem(BG_OVERLAY_KEY) || "0.5");
+  if (bg) _applyBackground(bg, overlay);
+  const slider = document.getElementById("bg-overlay-slider");
+  if (slider) {
+    slider.value = overlay;
+    const label = document.getElementById("bg-overlay-label");
+    if (label) label.textContent = overlay.toFixed(2);
+  }
+}
+
+function _applyBackground(value, overlay) {
+  const area = document.getElementById("messages-area");
+  if (!area) return;
+  if (value.startsWith("linear-gradient") || value.startsWith("#")) {
+    area.style.backgroundImage = "";
+    area.style.background = value;
+  } else {
+    area.style.background = "";
+    area.style.backgroundImage = "url('" + value + "')";
+    area.style.backgroundSize = "cover";
+    area.style.backgroundPosition = "center";
+  }
+  area.style.setProperty("--bg-overlay-opacity", String(overlay));
+  area.classList.add("has-custom-bg");
+}
+
+function handleBgFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const overlay = parseFloat(document.getElementById("bg-overlay-slider").value || "0.5");
+    localStorage.setItem(BG_KEY, e.target.result);
+    _applyBackground(e.target.result, overlay);
+  };
+  reader.readAsDataURL(file);
+}
+
+function applyBgUrl() {
+  const url = (document.getElementById("bg-url-input") || {}).value;
+  if (!url || !url.trim()) return;
+  const overlay = parseFloat((document.getElementById("bg-overlay-slider") || {}).value || "0.5");
+  localStorage.setItem(BG_KEY, url.trim());
+  _applyBackground(url.trim(), overlay);
+}
+
+function applyBgGradient(gradient) {
+  const overlay = parseFloat((document.getElementById("bg-overlay-slider") || {}).value || "0.5");
+  localStorage.setItem(BG_KEY, gradient);
+  _applyBackground(gradient, overlay);
+}
+
+function applyBgOverlay(value) {
+  const v = parseFloat(value);
+  localStorage.setItem(BG_OVERLAY_KEY, String(v));
+  const label = document.getElementById("bg-overlay-label");
+  if (label) label.textContent = v.toFixed(2);
+  const area = document.getElementById("messages-area");
+  if (area) area.style.setProperty("--bg-overlay-opacity", String(v));
+}
+
+function clearBackground() {
+  localStorage.removeItem(BG_KEY);
+  localStorage.removeItem(BG_OVERLAY_KEY);
+  const area = document.getElementById("messages-area");
+  if (area) {
+    area.style.background = "";
+    area.style.backgroundImage = "";
+    area.classList.remove("has-custom-bg");
+  }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// COMFYUI IMAGE GENERATION
+// ══════════════════════════════════════════════════════════════════════════════
+
+function openImageGenDialog() {
+  openModal("img-gen-modal");
+}
+
+async function submitImageGen() {
+  const promptEl = document.getElementById("img-gen-prompt");
+  const prompt = promptEl ? promptEl.value.trim() : "";
+  if (!prompt) { alert("Please enter a prompt."); return; }
+
+  const btn = document.getElementById("img-gen-submit-btn");
+  const statusEl = document.getElementById("img-gen-status");
+  if (btn) { btn.disabled = true; btn.textContent = "Generating\u2026"; }
+  if (statusEl) statusEl.textContent = "Sending to ComfyUI\u2026 this may take a minute.";
+
+  const comfy = _getComfySettings();
+  const widthEl  = document.getElementById("img-gen-width");
+  const heightEl = document.getElementById("img-gen-height");
+  const negEl    = document.getElementById("img-gen-negative");
+  const width  = parseInt((widthEl  || {}).value || "512");
+  const height = parseInt((heightEl || {}).value || "512");
+
+  try {
+    const res = await fetch("/api/comfyui/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt,
+        negative_prompt: (negEl || {}).value || "",
+        width, height,
+        steps: comfy.steps,
+        cfg: comfy.cfg,
+        checkpoint: comfy.checkpoint,
+        comfyui_url: comfy.comfyui_url,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(function() { return { detail: "Unknown error" }; });
+      throw new Error(err.detail || "Server error " + res.status);
+    }
+
+    const data = await res.json();
+    closeModal("img-gen-modal");
+    _insertGeneratedImage(data.data_url, prompt);
+    if (promptEl) promptEl.value = "";
+    if (statusEl) statusEl.textContent = "";
+  } catch (err) {
+    if (statusEl) statusEl.textContent = "Error: " + err.message;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Generate"; }
+  }
+}
+
+function _insertGeneratedImage(dataUrl, prompt) {
+  const area = document.getElementById("messages-area");
+  if (!area) return;
+
+  const div = document.createElement("div");
+  div.className = "message assistant";
+  div.style.animation = "fadeIn 0.2s ease";
+
+  const avatarEl = _buildAvatarEl("assistant");
+
+  const inner = document.createElement("div");
+  inner.style.cssText = "flex:1;min-width:0";
+
+  const bubble = document.createElement("div");
+  bubble.className = "msg-bubble generated-image-bubble";
+
+  const caption = document.createElement("div");
+  caption.className = "gen-image-prompt";
+  caption.textContent = prompt;
+
+  const img = document.createElement("img");
+  img.src = dataUrl;
+  img.alt = prompt;
+  img.className = "gen-image";
+  img.title = "Click to expand";
+  img.onclick = function() { this.classList.toggle("gen-image-fullscreen"); };
+
+  const hint = document.createElement("div");
+  hint.style.cssText = "font-size:11px;color:var(--text-dim);margin-top:6px";
+  hint.textContent = "Click image to expand \u00b7 Generated by ComfyUI";
+
+  bubble.appendChild(caption);
+  bubble.appendChild(img);
+  bubble.appendChild(hint);
+  inner.appendChild(bubble);
+  div.appendChild(avatarEl);
+  div.appendChild(inner);
+  area.appendChild(div);
+  scrollToBottom();
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MODAL HELPERS
+// ══════════════════════════════════════════════════════════════════════════════
+
+function openModal(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.style.display = "flex";
+  if (id === "gen-settings-modal") loadGenSettings();
+  if (id === "persona-modal") loadPersona();
+  if (id === "bg-modal") applyStoredBackground();
+}
+
+function closeModal(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = "none";
+}
+
+function backdropClose(event, id) {
+  if (event.target === event.currentTarget) closeModal(id);
 }

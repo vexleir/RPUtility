@@ -397,6 +397,7 @@ class RoleplayEngine:
         self,
         session_id: str,
         user_message: str,
+        gen_params: dict | None = None,
     ) -> Generator:
         session = self.sessions.get(session_id)
         if not session:
@@ -447,11 +448,17 @@ class RoleplayEngine:
 
         provider = self._provider_for_session(session)
 
+        gp = gen_params or {}
         chunks: list[str] = []
         for token in provider.chat_stream(
             messages,
-            temperature=self.config.temperature,
-            max_tokens=self.config.max_tokens,
+            temperature=gp.get("temperature", self.config.temperature),
+            max_tokens=gp.get("max_tokens", self.config.max_tokens),
+            top_k=gp.get("top_k"),
+            top_p=gp.get("top_p"),
+            min_p=gp.get("min_p"),
+            repeat_penalty=gp.get("repeat_penalty"),
+            seed=gp.get("seed"),
         ):
             chunks.append(token)
             yield token

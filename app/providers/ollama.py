@@ -105,16 +105,27 @@ class OllamaProvider(BaseProvider):
         *,
         temperature: float = 0.8,
         max_tokens: int = 1024,
+        top_k: int | None = None,
+        top_p: float | None = None,
+        min_p: float | None = None,
+        repeat_penalty: float | None = None,
+        seed: int | None = None,
     ) -> Generator[str, None, None]:
+        options: dict = {
+            "temperature": temperature,
+            "num_predict": max_tokens,
+            "num_ctx": self.num_ctx,
+        }
+        if top_k is not None:       options["top_k"] = top_k
+        if top_p is not None:       options["top_p"] = top_p
+        if min_p is not None:       options["min_p"] = min_p
+        if repeat_penalty is not None: options["repeat_penalty"] = repeat_penalty
+        if seed is not None and seed >= 0: options["seed"] = seed
         payload = {
             "model": self.model,
             "messages": messages,
             "stream": True,
-            "options": {
-                "temperature": temperature,
-                "num_predict": max_tokens,
-                "num_ctx": self.num_ctx,
-            },
+            "options": options,
         }
         try:
             with httpx.stream(
