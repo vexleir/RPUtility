@@ -398,6 +398,7 @@ function appendStreamingMessage() {
   div.appendChild(_buildAvatarEl("assistant"));
 
   const inner = document.createElement("div");
+  inner.style.cssText = "flex:1;min-width:0";   // must match _buildMessageDiv
   const bubble = document.createElement("div");
   bubble.className = "msg-bubble";
   const meta = document.createElement("div");
