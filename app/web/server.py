@@ -546,11 +546,11 @@ def api_get_session(session_id: str):
 
 
 @app.get("/api/session/{session_id}/turns")
-def api_get_turns(session_id: str, limit: int = 60):
-    """Get recent conversation turns for display in the chat UI."""
+def api_get_turns(session_id: str, limit: int = 60, offset: int = 0):
+    """Get conversation turns for display in the chat UI."""
     engine = get_engine()
     _resolve(engine, session_id)  # validates existence
-    turns = engine.sessions.get_last_n_turns(session_id, n=limit)
+    turns = engine.sessions.get_turns(session_id, limit=limit, offset=offset)
     return [
         {
             "id": t.id,

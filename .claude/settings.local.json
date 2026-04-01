@@ -15,7 +15,8 @@
       "Bash(python -m pytest tests/test_phase6.py -v --tb=short)",
       "Bash(python -c \"from app.web.server import app; from app.cards.loader import load_all_cards, extract_png_chara, load_card_from_png; from app.lorebooks.loader import load_lorebook_from_png; print\\('OK'\\)\")",
       "Bash(python -c ':*)",
-      "Bash(grep -h \"static/\" \"c:/Antigravity Projects/RP Utility/app/web/templates/\"*.html)"
+      "Bash(grep -h \"static/\" \"c:/Antigravity Projects/RP Utility/app/web/templates/\"*.html)",
+      "Bash(node --check app/web/static/chat.js)"
     ],
     "additionalDirectories": [
       "c:\\Users\\devio\\.claude\\projects\\c--Antigravity-Projects-RP-Utility\\memory"

@@ -10,7 +10,12 @@ let isGenerating = false;
 let memoriesExpanded = false;
 let elapsedTimer = null;    // interval ID for the elapsed-time counter
 let _bookmarkedTurnIds = new Set();  // set of bookmarked turn IDs for O(1) lookup
-let _allTurns = [];          // full turn list for search
+let _allTurns = [];          // lightweight turn list (id + role only) for search/regen
+
+// ── DOM cap — maximum messages kept rendered at once ──────────────────────────
+const MAX_DOM_MESSAGES = 60;
+let _totalTurnCount = 0;      // total turns fetched from server (for "load earlier" label)
+let _loadedOffset = 0;        // how many earlier turns have been loaded via "load earlier"
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", async () => {
@@ -47,23 +52,104 @@ async function loadSession() {
 // ── Load conversation history ─────────────────────────────────────────────────
 async function loadHistory() {
   try {
-    const res = await fetch(`/api/session/${SESSION_ID}/turns`);
+    // Fetch only the most recent MAX_DOM_MESSAGES turns for initial render.
+    // The server endpoint already returns newest-last within the limit.
+    const res = await fetch(`/api/session/${SESSION_ID}/turns?limit=${MAX_DOM_MESSAGES}`);
     const turns = await res.json();
-    _allTurns = turns;
+    _allTurns = turns.map(t => ({ id: t.id, role: t.role }));
+    _totalTurnCount = session?.turn_count ?? turns.length;
 
     if (turns.length === 0 && session?.first_message) {
       appendMessage("assistant", session.first_message, null, false);
       return;
     }
 
+    const area = $("#messages-area");
+
+    // If there are more turns than we rendered, show a load-earlier button
+    if (_totalTurnCount > turns.length) {
+      _loadedOffset = _totalTurnCount - turns.length;
+      area.insertBefore(_makeLoadEarlierBtn(), area.firstChild);
+    }
+
     for (const t of turns) {
       appendMessage(t.role, t.content, t.timestamp, false, t.id);
     }
 
-    // Attach regenerate button to the last assistant message
     attachRegenerateButton();
   } catch {
     showError("Could not load conversation history.");
+  }
+}
+
+function _makeLoadEarlierBtn() {
+  const btn = document.createElement("button");
+  btn.id = "load-earlier-btn";
+  btn.className = "btn btn-ghost btn-sm";
+  btn.style.cssText = "display:block;margin:8px auto;font-size:12px";
+  btn.textContent = `↑ Load earlier messages`;
+  btn.onclick = loadEarlierMessages;
+  return btn;
+}
+
+async function loadEarlierMessages() {
+  const btn = $("#load-earlier-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "Loading…"; }
+  try {
+    const batchSize = 20;
+    const newOffset = Math.max(0, _loadedOffset - batchSize);
+    const fetchCount = _loadedOffset - newOffset;
+    const res = await fetch(`/api/session/${SESSION_ID}/turns?limit=${fetchCount}&offset=${newOffset}`);
+    const turns = await res.json();
+    if (!turns.length) { if (btn) btn.remove(); return; }
+
+    const area = $("#messages-area");
+    const anchor = btn ? btn.nextSibling : area.firstChild;
+
+    // Insert older messages before the current oldest, preserving scroll position
+    const scrollBefore = area.scrollHeight - area.scrollTop;
+    const frag = document.createDocumentFragment();
+    for (const t of turns) {
+      const div = _buildMessageDiv(t.role, t.content, t.timestamp, false, t.id);
+      frag.appendChild(div);
+    }
+    area.insertBefore(frag, anchor);
+    area.scrollTop = area.scrollHeight - scrollBefore;  // keep viewport stable
+
+    _loadedOffset = newOffset;
+    if (btn) {
+      if (_loadedOffset <= 0) {
+        btn.remove();
+      } else {
+        btn.disabled = false;
+        btn.textContent = `↑ Load earlier messages`;
+      }
+    }
+
+    // Trim DOM from the bottom if we've grown past the cap
+    _trimDomMessages();
+  } catch {
+    if (btn) { btn.disabled = false; btn.textContent = `↑ Load earlier messages`; }
+  }
+}
+
+function _trimDomMessages() {
+  const messages = $$(".message");
+  if (messages.length <= MAX_DOM_MESSAGES) return;
+  const excess = messages.length - MAX_DOM_MESSAGES;
+  for (let i = messages.length - 1; i >= messages.length - excess; i--) {
+    messages[i].remove();
+  }
+  // Ensure "load earlier" footer exists to reload the trimmed tail
+  const area = $("#messages-area");
+  if (!$("#load-more-btn")) {
+    const btn2 = document.createElement("button");
+    btn2.id = "load-more-btn";
+    btn2.className = "btn btn-ghost btn-sm";
+    btn2.style.cssText = "display:block;margin:8px auto;font-size:12px";
+    btn2.textContent = "↓ Load more recent messages";
+    btn2.onclick = () => window.location.reload();
+    area.appendChild(btn2);
   }
 }
 
@@ -135,6 +221,14 @@ async function sendMessage() {
     const decoder = new TextDecoder();
     let buffer = "";
     let fullText = "";
+    let scrollPending = false;
+
+    const scheduleScroll = () => {
+      if (!scrollPending) {
+        scrollPending = true;
+        requestAnimationFrame(() => { scrollToBottom(); scrollPending = false; });
+      }
+    };
 
     outer: while (true) {
       const { done, value } = await reader.read();
@@ -154,8 +248,8 @@ async function sendMessage() {
 
         if (payload.token !== undefined) {
           fullText += payload.token;
-          updateStreamingMessage(bubble, fullText);
-          scrollToBottom();
+          appendToStreamingMessage(bubble, payload.token);
+          scheduleScroll();
         }
 
         if (payload.done) {
@@ -192,18 +286,14 @@ async function sendMessage() {
 }
 
 // ── Message rendering ─────────────────────────────────────────────────────────
-function appendMessage(role, content, timestamp = null, animate = true, turnId = null) {
-  const area = $("#messages-area");
+function _buildMessageDiv(role, content, timestamp = null, animate = false, turnId = null) {
   const isAssistant = role === "assistant";
-
   const avatar = isAssistant
     ? (session?.character_name?.[0] ?? "?").toUpperCase()
     : "You";
-
   const time = timestamp
     ? new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-
   const isBookmarked = turnId && _bookmarkedTurnIds.has(turnId);
   const starIcon = isBookmarked ? "★" : "☆";
   const starClass = isBookmarked ? "bookmarked" : "";
@@ -223,8 +313,12 @@ function appendMessage(role, content, timestamp = null, animate = true, turnId =
         </span>
       </div>
     </div>`;
+  return div;
+}
 
-  area.appendChild(div);
+function appendMessage(role, content, timestamp = null, animate = true, turnId = null) {
+  const div = _buildMessageDiv(role, content, timestamp, animate, turnId);
+  $("#messages-area").appendChild(div);
   return div;
 }
 
@@ -247,12 +341,12 @@ function appendStreamingMessage() {
   return div.querySelector(".msg-bubble");
 }
 
-function updateStreamingMessage(bubble, text) {
-  bubble.textContent = text;
+function appendToStreamingMessage(bubble, token) {
+  bubble.appendChild(document.createTextNode(token));
 }
 
 function finalizeStreamingMessage(bubble) {
-  // Nothing extra needed — textContent is already set
+  // Text nodes are already in place — nothing extra needed.
 }
 
 // ── Typing indicator ──────────────────────────────────────────────────────────
@@ -293,7 +387,9 @@ function scheduleBackgroundRefresh() {
   setTimeout(() => refreshSidebar(), 15000);
 }
 
-// Auto-refresh memories, relationships, world-state, and objectives every 8 seconds when idle
+// Auto-refresh sidebar every 30 seconds when idle.
+// Background extraction already fires targeted refreshes at 5s and 15s after each turn,
+// so this interval is just a safety net to catch anything that was missed.
 setInterval(() => {
   if (!isGenerating) {
     refreshMemories();
@@ -301,7 +397,7 @@ setInterval(() => {
     refreshWorldState();
     refreshObjectives();
   }
-}, 8000);
+}, 30000);
 
 // ── Scene sidebar ─────────────────────────────────────────────────────────────
 async function refreshSidebar() {
@@ -619,6 +715,13 @@ async function regenerateResponse(originalMessage) {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "", fullText = "";
+    let scrollPending2 = false;
+    const scheduleScroll2 = () => {
+      if (!scrollPending2) {
+        scrollPending2 = true;
+        requestAnimationFrame(() => { scrollToBottom(); scrollPending2 = false; });
+      }
+    };
 
     outer: while (true) {
       const { done, value } = await reader.read();
@@ -630,7 +733,7 @@ async function regenerateResponse(originalMessage) {
         if (!line.startsWith("data: ")) continue;
         const payload = JSON.parse(line.slice(6));
         if (payload.error) throw new Error(payload.error);
-        if (payload.token !== undefined) { fullText += payload.token; updateStreamingMessage(bubble, fullText); scrollToBottom(); }
+        if (payload.token !== undefined) { fullText += payload.token; appendToStreamingMessage(bubble, payload.token); scheduleScroll2(); }
         if (payload.done) { finalizeStreamingMessage(bubble); reloadTurnsQuietly(); scheduleBackgroundRefresh(); break outer; }
       }
     }
@@ -647,14 +750,42 @@ async function regenerateResponse(originalMessage) {
 
 async function reloadTurnsQuietly() {
   try {
-    const res = await fetch(`/api/session/${SESSION_ID}/turns`);
-    _allTurns = await res.json();
-    // Update bookmark stars on existing bubbles
-    $$(".message[data-turn-id]").forEach(el => {
-      const isBookmarked = _bookmarkedTurnIds.has(el.dataset.turnId);
-      const btn = el.querySelector(".bookmark-btn");
-      if (btn) { btn.textContent = isBookmarked ? "★" : "☆"; btn.classList.toggle("bookmarked", isBookmarked); }
-    });
+    // Fetch only the last few turns — enough to update IDs and attach regen button.
+    // We do NOT reload the full history; that would re-grow with every turn.
+    const res = await fetch(`/api/session/${SESSION_ID}/turns?limit=10`);
+    const recent = await res.json();
+    // Merge into _allTurns (lightweight id+role list) without duplicates
+    const existingIds = new Set(_allTurns.map(t => t.id));
+    for (const t of recent) {
+      if (!existingIds.has(t.id)) {
+        _allTurns.push({ id: t.id, role: t.role });
+        existingIds.add(t.id);
+      }
+    }
+    _totalTurnCount = (_totalTurnCount || 0) + 1;
+    // Stamp turn IDs onto the DOM messages that don't have them yet
+    // (the two most recent messages: the user one we just appended and the assistant streaming bubble)
+    const untagged = $$(".message:not([data-turn-id])");
+    const freshByRole = { user: null, assistant: null };
+    for (const t of [...recent].reverse()) {
+      if (!freshByRole[t.role]) freshByRole[t.role] = t;
+    }
+    for (const el of [...untagged].reverse()) {
+      const role = el.classList.contains("assistant") ? "assistant" : "user";
+      if (freshByRole[role] && !el.dataset.turnId) {
+        el.dataset.turnId = freshByRole[role].id;
+        freshByRole[role] = null;
+        // Add bookmark button now that we have the turn ID
+        const meta = el.querySelector(".msg-meta");
+        if (meta && !el.querySelector(".bookmark-btn")) {
+          const tid = el.dataset.turnId;
+          const span = document.createElement("span");
+          span.className = "msg-actions";
+          span.innerHTML = `<button class="msg-action-btn bookmark-btn" title="Bookmark this moment" onclick="toggleBookmark('${tid}', this)">☆</button>`;
+          meta.appendChild(span);
+        }
+      }
+    }
     attachRegenerateButton();
   } catch {}
 }

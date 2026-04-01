@@ -161,6 +161,9 @@ class RoleplayEngine:
             location=initial_location,
             active_characters=chars,
         )
+        # Register the starting location immediately
+        if initial_location and initial_location.strip() and initial_location.lower() != "unknown":
+            self.location_store.record_visit(session.id, initial_location.strip())
         if self.config.debug:
             log.debug("Created session %s '%s'", session.id[:8], name)
         return session
@@ -1334,9 +1337,11 @@ class RoleplayEngine:
                 location=new_location,
                 active_characters=new_chars,
             )
-            # Auto-register the new location in the registry
-            if new_location and new_location.strip() and new_location.lower() != "unknown":
-                self.location_store.record_visit(session_id, new_location.strip())
+            # Register the effective location (new or current) so the registry
+            # fills up even when the player stays in the same place.
+            effective_location = new_location or (scene.location if scene else None)
+            if effective_location and effective_location.strip() and effective_location.lower() != "unknown":
+                self.location_store.record_visit(session_id, effective_location.strip())
             log.info("Scene summary updated.")
         except Exception as e:
             log.warning("Scene extraction failed (non-fatal): %s", e)

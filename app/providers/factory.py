@@ -13,7 +13,7 @@ from .lmstudio import LMStudioProvider
 def build_provider(config: Config) -> BaseProvider:
     """Instantiate and return the provider specified in config."""
     if config.provider == "ollama":
-        return OllamaProvider(config.ollama_base_url, config.ollama_model)
+        return OllamaProvider(config.ollama_base_url, config.ollama_model, num_ctx=config.context_window)
     elif config.provider == "lmstudio":
         return LMStudioProvider(config.lmstudio_base_url, config.lmstudio_model)
     else:

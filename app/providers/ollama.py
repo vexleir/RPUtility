@@ -14,9 +14,10 @@ from .base import BaseProvider
 
 
 class OllamaProvider(BaseProvider):
-    def __init__(self, base_url: str, model: str):
+    def __init__(self, base_url: str, model: str, num_ctx: int = 4096):
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.num_ctx = num_ctx
 
     # ── Availability check ────────────────────────────────────────────────
 
@@ -59,6 +60,7 @@ class OllamaProvider(BaseProvider):
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
+                "num_ctx": self.num_ctx,
             },
         }
         try:
@@ -111,6 +113,7 @@ class OllamaProvider(BaseProvider):
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
+                "num_ctx": self.num_ctx,
             },
         }
         try:
@@ -160,6 +163,7 @@ class OllamaProvider(BaseProvider):
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
+                "num_ctx": self.num_ctx,
             },
         }
         try:
