@@ -328,6 +328,68 @@ def status_page(session_id: str):
     return HTMLResponse(read_template("status.html", SESSION_ID=session.id))
 
 
+@app.get("/chat/{session_id}/recap", response_class=HTMLResponse)
+def recap_page(session_id: str):
+    """Dedicated story recap page for returning players."""
+    engine = get_engine()
+    session = engine.load_session(session_id)
+    if not session:
+        sessions = engine.list_sessions()
+        session = next((s for s in sessions if s.id.startswith(session_id)), None)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return HTMLResponse(read_template("recap.html", SESSION_ID=session.id))
+
+
+@app.get("/api/session/{session_id}/recap/full")
+def api_get_full_recap(session_id: str):
+    """Generate and return the full narrative recap for the recap page."""
+    from app.sessions.recap import generate_full_recap
+    engine = get_engine()
+    session = _resolve(engine, session_id)
+    if session.turn_count == 0:
+        return {"recap": "", "scene": None, "relationships": [], "npcs": [], "objectives": []}
+
+    provider = engine._provider_for_session(session)
+    memories = engine.memory_store.get_active(session_id)
+    scene = engine.scene_mgr.get(session_id)
+    relationships = engine.rel_tracker.get_all(session_id)
+    clock = engine.clock_store.get_or_default(session_id)
+    npcs = engine.get_npcs(session_id)
+    objectives = engine.get_objectives(session_id)
+
+    recap_text = generate_full_recap(
+        provider=provider,
+        memories=memories,
+        scene=scene,
+        relationships=relationships,
+        clock=clock,
+        session_name=session.name,
+        character_name=session.character_name,
+        turn_count=session.turn_count,
+    )
+
+    return {
+        "recap": recap_text,
+        "scene": _scene_dict(scene) if scene else None,
+        "clock": _clock_dict(clock),
+        "relationships": [_rel_dict(r) for r in relationships],
+        "npcs": [
+            {"name": n.name, "role": n.role, "description": n.description}
+            for n in npcs
+        ],
+        "objectives": [
+            {"title": o.title, "status": o.status.value, "description": o.description}
+            for o in objectives
+        ],
+        "session": {
+            "name": session.name,
+            "character_name": session.character_name,
+            "turn_count": session.turn_count,
+        },
+    }
+
+
 # ── API: assets ───────────────────────────────────────────────────────────────
 
 @app.get("/api/cards")

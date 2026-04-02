@@ -32,6 +32,7 @@
       <button class="btn btn-ghost btn-sm" onclick="openModal('persona-modal')" title="Player persona">👤</button>
       <button class="btn btn-ghost btn-sm" onclick="openModal('gen-settings-modal')" title="Generation settings">⚙️</button>
       <button class="btn btn-ghost btn-sm" onclick="openModal('bg-modal')" title="Chat background">🖼</button>
+      <a href="/chat/{{SESSION_ID}}/recap" class="btn btn-ghost btn-sm" title="Story recap for returning players">📖 Recap</a>
       <a href="/api/session/{{SESSION_ID}}/export" class="btn btn-ghost btn-sm" title="Export session as markdown" download>⬇</a>
       <a href="/chat/{{SESSION_ID}}/status" class="btn btn-ghost btn-sm" title="Session status &amp; inspection">📊 Status</a>
       <button class="btn btn-ghost btn-sm" onclick="refreshSidebar()" title="Refresh sidebar state">↺</button>
