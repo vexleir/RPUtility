@@ -32,7 +32,9 @@
       "Bash(git -C \"c:/Antigravity Projects/RP Utility\" ls-files .env)",
       "Bash(git -C 'c:/Antigravity Projects/RP Utility' rm --cached .env data/rp_utility.db data/cards/arcadia.json data/cards/batman_the_dark_knight.png data/cards/hotel_transylvania.png data/cards/the-order-of-the-vitalis.json data/cards/the_world_of_verdalis_rpg.png data/lorebooks/arcadia-lorebook.json 'data/lorebooks/main_Humiliation Methods_world_info.json' 'data/lorebooks/main_SCP Foundation_world_info.json' data/lorebooks/the-order-of-the-vitalis-lorebook.json)",
       "Bash(git -C \"c:/Antigravity Projects/RP Utility\" ls-files data/ .env)",
-      "Bash(git -C \"c:/Antigravity Projects/RP Utility\" status --short)"
+      "Bash(git -C \"c:/Antigravity Projects/RP Utility\" status --short)",
+      "Bash(git filter-repo:*)",
+      "Bash(python -m git_filter_repo --version)"
     ],
     "additionalDirectories": [
       "c:\\Users\\devio\\.claude\\projects\\c--Antigravity-Projects-RP-Utility\\memory"
