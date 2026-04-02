@@ -1618,7 +1618,8 @@ async def api_generate_image_prompt(session_id: str):
     ]
 
     try:
-        raw = engine.provider.generate(
+        provider = engine._provider_for_session(session)
+        raw = provider.generate(
             "\n".join(parts),
             system=system,
             temperature=0.75,
