@@ -93,6 +93,14 @@ CHARACTER RULES:
 - If Active Quests are listed, keep them in mind and allow the story to progress them naturally."""
 
 
+def _resolve_vars(text: str, char_name: str, user_name: str) -> str:
+    """Replace SillyTavern-style {{char}} and {{user}} template variables."""
+    import re
+    text = re.sub(r"\{\{char\}\}", char_name, text, flags=re.IGNORECASE)
+    text = re.sub(r"\{\{user\}\}", user_name, text, flags=re.IGNORECASE)
+    return text
+
+
 def build_messages(
     *,
     card: CharacterCard,
@@ -103,6 +111,7 @@ def build_messages(
     history: list[ConversationTurn],
     user_message: str,
     config: Config,
+    user_name: str = "Player",
     world_state: list[WorldStateEntry] | None = None,
     objectives: list[PlayerObjective] | None = None,
     npcs: list[NpcEntry] | None = None,
@@ -123,7 +132,7 @@ def build_messages(
     system_parts: list[str] = [_CORE_INSTRUCTIONS]
 
     # 1. Character card
-    system_parts.append(_format_character_card(card))
+    system_parts.append(_format_character_card(card, user_name=user_name))
 
     # 2. Lorebook entries
     if lorebook_entries:
@@ -202,9 +211,9 @@ def build_messages(
     system_content = "\n\n".join(system_parts)
     messages: list[dict] = [{"role": "system", "content": system_content}]
 
-    # 8. Conversation history
+    # 8. Conversation history (resolve any template vars left in stored turns)
     for turn in history:
-        messages.append({"role": turn.role, "content": turn.content})
+        messages.append({"role": turn.role, "content": _resolve_vars(turn.content, card.name, user_name)})
 
     # 9. Current user message
     messages.append({"role": "user", "content": user_message})
@@ -214,18 +223,19 @@ def build_messages(
 
 # ── Section formatters ────────────────────────────────────────────────────────
 
-def _format_character_card(card: CharacterCard) -> str:
+def _format_character_card(card: CharacterCard, user_name: str = "Player") -> str:
+    rv = lambda t: _resolve_vars(t, card.name, user_name)
     parts = [f"[CHARACTER: {card.name.upper()}]"]
     if card.description:
-        parts.append(f"Description: {card.description}")
+        parts.append(f"Description: {rv(card.description)}")
     if card.personality:
-        parts.append(f"Personality: {card.personality}")
+        parts.append(f"Personality: {rv(card.personality)}")
     if card.scenario:
-        parts.append(f"Scenario: {card.scenario}")
+        parts.append(f"Scenario: {rv(card.scenario)}")
     if card.system_prompt:
-        parts.append(f"Additional instructions: {card.system_prompt}")
+        parts.append(f"Additional instructions: {rv(card.system_prompt)}")
     if card.example_dialogue:
-        parts.append(f"Example dialogue:\n{card.example_dialogue}")
+        parts.append(f"Example dialogue:\n{rv(card.example_dialogue)}")
     # Phase 3 — Voice Guide (injected only when fields are present on the card)
     voice_parts: list[str] = []
     if card.voice_tone:

@@ -72,6 +72,7 @@ class CreateSessionRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    user_name: str = "Player"
     # Optional per-request generation overrides (from the settings panel)
     temperature: Optional[float] = None
     top_k: Optional[int] = None
@@ -676,7 +677,7 @@ def api_chat(session_id: str, req: ChatRequest):
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
     try:
-        response = engine.chat(session_id, req.message)
+        response = engine.chat(session_id, req.message, user_name=req.user_name)
     except RuntimeError as e:
         # Provider unreachable or returned an API error
         log.error("Provider error during chat: %s", e)
@@ -713,7 +714,7 @@ def api_chat_stream(session_id: str, req: ChatRequest):
 
     def event_generator():
         try:
-            for item in engine.chat_stream(session_id, req.message, gen_params=req.gen_params()):
+            for item in engine.chat_stream(session_id, req.message, gen_params=req.gen_params(), user_name=req.user_name):
                 if isinstance(item, str):
                     # Text token — send as SSE data
                     yield f"data: {json.dumps({'token': item})}\n\n"
@@ -885,7 +886,7 @@ def api_regenerate(session_id: str, req: RegenerateRequest):
 
     def event_generator():
         try:
-            for item in engine.chat_stream(session_id, req.message, gen_params=req.gen_params()):
+            for item in engine.chat_stream(session_id, req.message, gen_params=req.gen_params(), user_name=req.user_name):
                 if isinstance(item, str):
                     yield f"data: {json.dumps({'token': item})}\n\n"
                 else:
