@@ -1044,3 +1044,23 @@ select option { background: var(--surface2); }
   object-fit: contain; cursor: zoom-out;
   box-shadow: 0 0 0 9999px rgba(0,0,0,0.85);
 }
+
+/* ── Turn editor ─────────────────────────────────────────────────── */
+.edit-turn-btn { opacity: 0; transition: opacity 0.15s; }
+.message:hover .edit-turn-btn { opacity: 1; }
+.turn-editor {
+  background: var(--surface2); border: 1px solid var(--accent);
+  border-radius: 10px; padding: 10px 12px; flex: 1;
+}
+.turn-editor-textarea {
+  width: 100%; min-height: 80px; resize: vertical;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--text); font-size: 14px;
+  font-family: inherit; padding: 8px 10px; line-height: 1.5;
+}
+.turn-editor-textarea:focus { outline: none; border-color: var(--accent-light); }
+.turn-editor-actions {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 8px; flex-wrap: wrap; gap: 8px;
+}
+.turn-editor-hint { font-size: 11px; color: var(--text-dim); }

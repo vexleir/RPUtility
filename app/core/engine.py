@@ -45,6 +45,7 @@ from app.relationships.extractor import extract_relationship_deltas
 from app.scene.extractor import extract_scene_update
 from app.sessions.manager import SessionManager
 from app.sessions.objectives import ObjectivesStore
+from app.sessions.aliases import CharacterAliasStore
 from app.sessions.bookmarks import BookmarkStore
 from app.sessions.npc_roster import NpcRosterStore
 from app.sessions.location_registry import LocationRegistryStore
@@ -102,6 +103,7 @@ class RoleplayEngine:
         self.scene_mgr = SceneManager(config.db_path)
         self.rel_tracker = RelationshipTracker(config.db_path)
 
+        self.alias_store = CharacterAliasStore(config.db_path)
         self.objectives_store = ObjectivesStore(config.db_path)
         self.bookmark_store = BookmarkStore(config.db_path)
         self.npc_store = NpcRosterStore(config.db_path)
@@ -1252,12 +1254,16 @@ class RoleplayEngine:
                 scene=scene,
                 debug=self.config.debug,
             )
+            # Resolve aliases → canonical names before storing.
+            alias_map = self.alias_store.build_map(session_id)
             # Build a case-insensitive allowlist from active characters.
             # Relationships between characters not in the scene are discarded.
             allowed = {c.lower() for c in (scene.active_characters if scene else [])}
             for d in deltas:
-                source = str(d.get("source", "")).strip()
-                target = str(d.get("target", "")).strip()
+                source = alias_map.get(str(d.get("source", "")).strip().lower(),
+                                       str(d.get("source", "")).strip())
+                target = alias_map.get(str(d.get("target", "")).strip().lower(),
+                                       str(d.get("target", "")).strip())
                 if not source or not target:
                     continue
                 if allowed and (source.lower() not in allowed or target.lower() not in allowed):

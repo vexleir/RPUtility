@@ -324,6 +324,17 @@ def _migrate(conn: sqlite3.Connection) -> None:
         )
     """)
 
+    # Character aliases: maps alternate names/titles to a canonical name
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS character_aliases (
+            id              TEXT PRIMARY KEY,
+            session_id      TEXT NOT NULL,
+            canonical_name  TEXT NOT NULL,
+            alias           TEXT NOT NULL,
+            UNIQUE(session_id, alias)
+        )
+    """)
+
 
 def _create_tables(conn: sqlite3.Connection) -> None:
     conn.executescript("""

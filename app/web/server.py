@@ -118,6 +118,20 @@ class RegenerateRequest(ChatRequest):
     pass
 
 
+class EditTurnRequest(BaseModel):
+    content: str
+
+
+class AddAliasRequest(BaseModel):
+    canonical: str
+    alias: str
+
+
+class MergeCharactersRequest(BaseModel):
+    canonical: str
+    aliases: list[str]
+
+
 class CreateNpcRequest(BaseModel):
     name: str
     role: str = ""
@@ -831,7 +845,19 @@ def api_get_contradictions(session_id: str):
 def api_get_relationships(session_id: str):
     engine = get_engine()
     _resolve(engine, session_id)
-    return [_rel_dict(r) for r in engine.get_relationships(session_id)]
+    alias_map = engine.alias_store.build_map(session_id)
+    rels = engine.get_relationships(session_id)
+    # Normalise entity names through alias map before returning
+    for r in rels:
+        r.source_entity = alias_map.get(r.source_entity.lower(), r.source_entity)
+        r.target_entity = alias_map.get(r.target_entity.lower(), r.target_entity)
+    # Deduplicate: if two rows resolve to same source→target, keep highest trust
+    seen: dict[tuple, object] = {}
+    for r in rels:
+        key = (r.source_entity, r.target_entity)
+        if key not in seen or abs(r.trust) + abs(r.affection) > abs(seen[key].trust) + abs(seen[key].affection):
+            seen[key] = r
+    return [_rel_dict(r) for r in seen.values()]
 
 
 # ── API: regenerate ───────────────────────────────────────────────────────────
@@ -917,6 +943,64 @@ def api_delete_objective(session_id: str, objective_id: str):
     engine = get_engine()
     _resolve(engine, session_id)
     engine.delete_objective(objective_id)
+
+
+# ── API: turn editing ────────────────────────────────────────────────────────
+
+@app.put("/api/session/{session_id}/turns/{turn_id}")
+def api_edit_turn(session_id: str, turn_id: str, req: EditTurnRequest):
+    """Update the content of a single conversation turn."""
+    engine = get_engine()
+    _resolve(engine, session_id)
+    content = req.content.strip()
+    if not content:
+        raise HTTPException(400, "Content cannot be empty.")
+    found = engine.sessions.update_turn_content(turn_id, content)
+    if not found:
+        raise HTTPException(404, f"Turn '{turn_id}' not found.")
+    return {"id": turn_id, "content": content}
+
+
+# ── API: character aliases ─────────────────────────────────────────────────────
+
+@app.get("/api/session/{session_id}/aliases")
+def api_get_aliases(session_id: str):
+    engine = get_engine()
+    _resolve(engine, session_id)
+    return engine.alias_store.get_all(session_id)
+
+
+@app.post("/api/session/{session_id}/aliases", status_code=201)
+def api_add_alias(session_id: str, req: AddAliasRequest):
+    engine = get_engine()
+    _resolve(engine, session_id)
+    if not req.canonical.strip() or not req.alias.strip():
+        raise HTTPException(400, "Both canonical and alias are required.")
+    return engine.alias_store.add_alias(session_id, req.canonical.strip(), req.alias.strip())
+
+
+@app.post("/api/session/{session_id}/aliases/merge")
+def api_merge_characters(session_id: str, req: MergeCharactersRequest):
+    """
+    Merge one or more alias names into a canonical character name.
+    Rewrites existing relationship rows and memory entity lists in the DB.
+    """
+    engine = get_engine()
+    _resolve(engine, session_id)
+    if not req.canonical.strip():
+        raise HTTPException(400, "canonical is required.")
+    aliases = [a.strip() for a in req.aliases if a.strip()]
+    if not aliases:
+        raise HTTPException(400, "At least one alias is required.")
+    engine.alias_store.merge_entities(session_id, req.canonical.strip(), aliases)
+    return {"merged": aliases, "into": req.canonical.strip()}
+
+
+@app.delete("/api/session/{session_id}/aliases/{alias_id}", status_code=204)
+def api_delete_alias(session_id: str, alias_id: str):
+    engine = get_engine()
+    _resolve(engine, session_id)
+    engine.alias_store.delete_alias(alias_id)
 
 
 # ── API: bookmarks ────────────────────────────────────────────────────────────

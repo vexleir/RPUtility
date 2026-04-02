@@ -347,6 +347,35 @@
       </div>
     </section>
 
+    <!-- ── Character Aliases ── -->
+    <section class="status-section" id="aliases-section">
+      <div class="status-section-header" onclick="toggleSection('aliases-section')">
+        <span>👥 Character Aliases</span>
+        <span class="sidebar-chevron">▼</span>
+      </div>
+      <div class="status-section-body" id="aliases-body">
+        <p class="form-hint" style="margin-bottom:16px">
+          Map alternate names and titles to a canonical character name.
+          Use <strong>Merge</strong> to rewrite all existing memories and relationships in one step.
+        </p>
+        <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:flex-end">
+          <div class="form-group" style="margin:0;flex:1;min-width:140px">
+            <label>Canonical name</label>
+            <input type="text" id="alias-canonical" placeholder="Belinda">
+          </div>
+          <div class="form-group" style="margin:0;flex:1;min-width:140px">
+            <label>Alias / alternate name</label>
+            <input type="text" id="alias-value" placeholder="The High Priestess">
+          </div>
+          <button class="btn btn-secondary btn-sm" style="flex-shrink:0" onclick="addAlias()">Add alias</button>
+          <button class="btn btn-primary btn-sm" style="flex-shrink:0" onclick="openMergeDialog()">Merge characters…</button>
+        </div>
+        <div id="alias-list" style="display:flex;flex-direction:column;gap:6px">
+          <div class="dim" style="font-size:12px">Loading…</div>
+        </div>
+      </div>
+    </section>
+
     <!-- ── Archived Memories ── -->
     <section class="status-section status-section-collapsed" id="arch-section">
       <div class="status-section-header" onclick="toggleSection('arch-section')">
@@ -360,6 +389,125 @@
 
   </div><!-- end status-body -->
 
+  <!-- ── Merge Characters Dialog ─────────────────────────────────── -->
+  <div class="rp-modal-backdrop" id="merge-modal" style="display:none" onclick="if(event.target===this)this.style.display='none'">
+    <div class="rp-modal">
+      <div class="rp-modal-header">
+        <h3>👥 Merge Characters</h3>
+        <button class="rp-modal-close" onclick="document.getElementById('merge-modal').style.display='none'">✕</button>
+      </div>
+      <div class="rp-modal-body">
+        <p class="form-hint" style="margin-bottom:14px">
+          Choose a canonical name and list every alternate name or title to merge into it.
+          All matching relationship rows and memory entity lists will be rewritten in the database immediately.
+        </p>
+        <div class="form-group">
+          <label>Canonical name (keep this one)</label>
+          <input type="text" id="merge-canonical" placeholder="Belinda">
+        </div>
+        <div class="form-group">
+          <label>Aliases to merge (one per line)</label>
+          <textarea id="merge-aliases" rows="5" placeholder="Belinda Sossaman&#10;The High Priestess&#10;High Priestess Belinda" style="resize:vertical"></textarea>
+        </div>
+        <div id="merge-status" style="font-size:13px;color:var(--text-muted);min-height:18px"></div>
+      </div>
+      <div class="rp-modal-footer">
+        <button class="btn btn-secondary" onclick="document.getElementById('merge-modal').style.display='none'">Cancel</button>
+        <button class="btn btn-primary" id="merge-submit-btn" onclick="submitMerge()">Merge &amp; Rewrite</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/static/status.js?v={{CACHE_VER}}"></script>
+  <script>
+    // ── Alias management ─────────────────────────────────────────────────
+    async function loadAliases() {
+      const list = document.getElementById("alias-list");
+      try {
+        const res = await fetch(`/api/session/${window.__SESSION_ID__}/aliases`);
+        const aliases = await res.json();
+        if (!aliases.length) {
+          list.innerHTML = '<div class="dim" style="font-size:12px">No aliases defined yet.</div>';
+          return;
+        }
+        // Group by canonical
+        const groups = {};
+        for (const a of aliases) {
+          if (!groups[a.canonical]) groups[a.canonical] = [];
+          groups[a.canonical].push(a);
+        }
+        list.innerHTML = Object.entries(groups).map(([canonical, items]) => `
+          <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px">
+            <div style="font-weight:700;font-size:13px;margin-bottom:6px">→ ${esc(canonical)}</div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px">
+              ${items.map(a => `
+                <span style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:3px 10px;font-size:12px;display:flex;align-items:center;gap:6px">
+                  ${esc(a.alias)}
+                  <button onclick="deleteAlias('${esc(a.id)}')" style="background:none;border:none;color:var(--text-dim);cursor:pointer;padding:0;font-size:11px" title="Remove alias">✕</button>
+                </span>`).join("")}
+            </div>
+          </div>`).join("");
+      } catch {
+        list.innerHTML = '<div class="dim" style="font-size:12px">Could not load aliases.</div>';
+      }
+    }
+
+    async function addAlias() {
+      const canonical = document.getElementById("alias-canonical").value.trim();
+      const alias = document.getElementById("alias-value").value.trim();
+      if (!canonical || !alias) { alert("Both fields are required."); return; }
+      await fetch(`/api/session/${window.__SESSION_ID__}/aliases`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ canonical, alias }),
+      });
+      document.getElementById("alias-value").value = "";
+      loadAliases();
+    }
+
+    async function deleteAlias(id) {
+      await fetch(`/api/session/${window.__SESSION_ID__}/aliases/${id}`, { method: "DELETE" });
+      loadAliases();
+    }
+
+    function openMergeDialog() {
+      const canonical = document.getElementById("alias-canonical").value.trim();
+      if (canonical) document.getElementById("merge-canonical").value = canonical;
+      document.getElementById("merge-status").textContent = "";
+      document.getElementById("merge-modal").style.display = "flex";
+    }
+
+    async function submitMerge() {
+      const canonical = document.getElementById("merge-canonical").value.trim();
+      const raw = document.getElementById("merge-aliases").value;
+      const aliases = raw.split("\n").map(s => s.trim()).filter(Boolean);
+      if (!canonical || !aliases.length) { alert("Fill in both fields."); return; }
+      const btn = document.getElementById("merge-submit-btn");
+      const status = document.getElementById("merge-status");
+      btn.disabled = true; btn.textContent = "Merging…";
+      status.textContent = "";
+      try {
+        const res = await fetch(`/api/session/${window.__SESSION_ID__}/aliases/merge`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ canonical, aliases }),
+        });
+        if (!res.ok) throw new Error((await res.json()).detail || "Error");
+        status.textContent = `✓ Merged ${aliases.length} alias(es) into "${canonical}". Reload the page to see updated data.`;
+        document.getElementById("merge-aliases").value = "";
+        loadAliases();
+      } catch (err) {
+        status.textContent = "Error: " + err.message;
+      } finally {
+        btn.disabled = false; btn.textContent = "Merge & Rewrite";
+      }
+    }
+
+    function esc(t) {
+      return String(t||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+    }
+
+    document.addEventListener("DOMContentLoaded", loadAliases);
+  </script>
 </body>
 </html>

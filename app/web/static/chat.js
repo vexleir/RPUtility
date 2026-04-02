@@ -368,6 +368,8 @@ function _buildMessageDiv(role, content, timestamp = null, animate = false, turn
   metaEl.className = "msg-meta";
   metaEl.innerHTML = `<span>${time}</span><span class="msg-actions">${
     turnId ? `<button class="msg-action-btn bookmark-btn ${starClass}" title="Bookmark this moment" onclick="toggleBookmark('${esc(turnId)}', this)">${starIcon}</button>` : ""
+  }${
+    turnId ? `<button class="msg-action-btn edit-turn-btn" title="Edit this message" onclick="openTurnEditor('${esc(turnId)}', this)">✏</button>` : ""
   }</span>`;
 
   const inner = document.createElement("div");
@@ -1482,6 +1484,76 @@ function _insertGeneratedImage(dataUrl, prompt) {
   scrollToBottom();
 }
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TURN EDITOR
+// ══════════════════════════════════════════════════════════════════════════════
+
+function openTurnEditor(turnId, btn) {
+  // Find the message div and bubble
+  const msgDiv = btn.closest(".message");
+  if (!msgDiv) return;
+  const bubble = msgDiv.querySelector(".msg-bubble");
+  if (!bubble) return;
+
+  // Get current plain text (strip HTML for assistant messages)
+  const currentText = bubble.innerText || bubble.textContent || "";
+
+  // Build inline editor replacing the bubble
+  const editor = document.createElement("div");
+  editor.className = "turn-editor";
+  editor.innerHTML = `
+    <textarea class="turn-editor-textarea">${esc(currentText.trim())}</textarea>
+    <div class="turn-editor-actions">
+      <span class="turn-editor-hint">Edit the message content. Memories and relationships are NOT re-extracted.</span>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary btn-sm" onclick="cancelTurnEditor(this)">Cancel</button>
+        <button class="btn btn-primary btn-sm" onclick="saveTurnEdit('${esc(turnId)}', this)">Save</button>
+      </div>
+    </div>`;
+  bubble.replaceWith(editor);
+  editor.querySelector("textarea").focus();
+}
+
+function cancelTurnEditor(btn) {
+  location.reload();
+}
+
+async function saveTurnEdit(turnId, btn) {
+  const editor = btn.closest(".turn-editor");
+  const textarea = editor.querySelector("textarea");
+  const newContent = textarea.value.trim();
+  if (!newContent) return;
+
+  btn.disabled = true;
+  btn.textContent = "Saving…";
+  try {
+    const res = await fetch(`/api/session/${SESSION_ID}/turns/${turnId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: newContent }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Error" }));
+      throw new Error(err.detail || "Save failed");
+    }
+    // Replace editor with updated bubble
+    const msgDiv = editor.closest(".message");
+    const role = msgDiv.classList.contains("assistant") ? "assistant" : "user";
+    const newBubble = document.createElement("div");
+    newBubble.className = "msg-bubble" + (role === "assistant" ? " md-content" : "");
+    if (role === "assistant") {
+      newBubble.innerHTML = renderMarkdown(newContent);
+    } else {
+      newBubble.textContent = newContent;
+    }
+    editor.replaceWith(newBubble);
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "Save";
+    alert("Save failed: " + err.message);
+  }
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // MODAL HELPERS

@@ -150,6 +150,22 @@ class SessionManager:
             ).fetchall()
         return [_row_to_turn(r) for r in rows]
 
+    def update_turn_content(self, turn_id: str, content: str) -> bool:
+        """Update the content of a single turn. Returns True if a row was found."""
+        from datetime import datetime
+        with self._conn() as conn:
+            cur = conn.execute(
+                "UPDATE turns SET content=? WHERE id=?",
+                (content, turn_id),
+            )
+        return cur.rowcount > 0
+
+    def get_turn_by_id(self, turn_id: str):
+        """Return a single ConversationTurn by its ID, or None."""
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM turns WHERE id=?", (turn_id,)).fetchone()
+        return _row_to_turn(row) if row else None
+
     def delete_turns_from(self, session_id: str, turn_number: int) -> int:
         """Delete all turns with turn_number >= turn_number. Returns count deleted."""
         with self._conn() as conn:
