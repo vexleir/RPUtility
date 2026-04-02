@@ -1080,16 +1080,19 @@ def api_export_session(session_id: str):
     bookmarks = engine.get_bookmarks(session_id)
     bookmarked_ids = {b.turn_id for b in bookmarks}
 
+    scene = engine.scene_manager.get(session_id)
+    clock = engine.clock_store.get(session_id)
+    clock_str = f"Day {clock.day}, Month {clock.month}, Year {clock.year} — {clock.time_of_day}" if clock else ""
+
     lines: list[str] = [
         f"# {session.name}",
-        f"*Character: {session.character_name}*\n",
+        f"*Character: {session.character_name}*",
+        f"*Location: {scene.location}*" if scene else "",
+        f"*{clock_str}*" if clock_str else "",
+        "",
     ]
 
-    recap = engine.generate_recap(session_id) if session.turn_count > 0 else ""
-    if recap:
-        lines += ["> **Story so far:** " + recap, ""]
-
-    for turn in turns:
+    for turn in reversed(turns):
         star = " ⭐" if turn.id in bookmarked_ids else ""
         if turn.role == "user":
             lines.append(f"**You:** {turn.content}{star}\n")
