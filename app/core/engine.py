@@ -309,6 +309,7 @@ class RoleplayEngine:
         user_message: str,
         *,
         stream: bool = False,
+        user_name: str = "Player",
     ) -> str:
         session = self.sessions.get(session_id)
         if not session:
@@ -332,6 +333,7 @@ class RoleplayEngine:
             history=ctx["history"],
             user_message=user_message,
             config=self.config,
+            user_name=user_name,
             world_state=ctx["world_state"],
             objectives=ctx["objectives"],
             npcs=ctx["npcs"],
@@ -400,6 +402,7 @@ class RoleplayEngine:
         session_id: str,
         user_message: str,
         gen_params: dict | None = None,
+        user_name: str = "Player",
     ) -> Generator:
         session = self.sessions.get(session_id)
         if not session:
@@ -423,6 +426,7 @@ class RoleplayEngine:
             history=ctx["history"],
             user_message=user_message,
             config=self.config,
+            user_name=user_name,
             world_state=ctx["world_state"],
             objectives=ctx["objectives"],
             npcs=ctx["npcs"],

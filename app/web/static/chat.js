@@ -5,6 +5,16 @@ const $$ = (sel, ctx = document) => [...ctx.querySelectorAll(sel)];
 
 /* chat.js — roleplay chat interface */
 
+// ── Template variable resolution ─────────────────────────────────────────────
+function resolveVars(text) {
+  if (!text) return text;
+  const charName = session?.character_name ?? "Character";
+  const userName = _getPersona().name || "Player";
+  return text
+    .replace(/\{\{char\}\}/gi, charName)
+    .replace(/\{\{user\}\}/gi, userName);
+}
+
 // ── Configure marked.js ───────────────────────────────────────────────────────
 if (typeof marked !== "undefined") {
   marked.setOptions({ breaks: true, gfm: true });
@@ -228,7 +238,7 @@ async function sendMessage() {
     const res = await fetch(`/api/session/${SESSION_ID}/chat/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text, ..._getGenParams() }),
+      body: JSON.stringify({ message: text, user_name: _getPersona().name || "Player", ..._getGenParams() }),
     });
 
     if (!res.ok) {
@@ -358,10 +368,10 @@ function _buildMessageDiv(role, content, timestamp = null, animate = false, turn
   const bubble = document.createElement("div");
   bubble.className = "msg-bubble";
   if (isAssistant) {
-    bubble.innerHTML = renderMarkdown(content);
+    bubble.innerHTML = renderMarkdown(resolveVars(content));
     bubble.classList.add("md-content");
   } else {
-    bubble.textContent = content;
+    bubble.textContent = resolveVars(content);
   }
 
   const metaEl = document.createElement("div");
@@ -421,7 +431,7 @@ function appendToStreamingMessage(bubble, token) {
 function finalizeStreamingMessage(bubble, fullText) {
   // Convert accumulated plain text to rendered markdown
   if (fullText && typeof marked !== "undefined") {
-    bubble.innerHTML = renderMarkdown(fullText);
+    bubble.innerHTML = renderMarkdown(resolveVars(fullText));
     bubble.classList.add("md-content");
   }
 }
@@ -784,7 +794,7 @@ async function regenerateResponse(originalMessage) {
     const res = await fetch(`/api/session/${SESSION_ID}/chat/regenerate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: originalMessage }),
+      body: JSON.stringify({ message: originalMessage, user_name: _getPersona().name || "Player" }),
     });
     if (!res.ok) throw new Error(`Server error ${res.status}`);
     showTyping(false);
