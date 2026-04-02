@@ -88,35 +88,42 @@ class CharacterAliasStore:
             if alias.strip() and alias.strip().lower() != canonical_name.strip().lower():
                 self.add_alias(session_id, canonical_name.strip(), alias.strip())
 
-        # Rewrite relationship rows
+        # Rewrite relationship rows — delete alias rows where canonical pair already
+        # exists (to avoid UNIQUE constraint violations), then rename the rest.
         with get_connection(self._db) as conn:
             for alias in aliases:
                 a = alias.strip()
                 if not a:
                     continue
-                # Rename source_entity
+                # source_entity: drop alias rows whose target already has a canonical row
+                conn.execute(
+                    """DELETE FROM relationships
+                       WHERE session_id=? AND lower(source_entity)=lower(?)
+                         AND target_entity IN (
+                           SELECT target_entity FROM relationships
+                           WHERE session_id=? AND source_entity=?
+                         )""",
+                    (session_id, a, session_id, canonical_name),
+                )
                 conn.execute(
                     """UPDATE relationships SET source_entity=?
                        WHERE session_id=? AND lower(source_entity)=lower(?)""",
                     (canonical_name, session_id, a),
                 )
-                # Rename target_entity
+                # target_entity: drop alias rows whose source already has a canonical row
+                conn.execute(
+                    """DELETE FROM relationships
+                       WHERE session_id=? AND lower(target_entity)=lower(?)
+                         AND source_entity IN (
+                           SELECT source_entity FROM relationships
+                           WHERE session_id=? AND target_entity=?
+                         )""",
+                    (session_id, a, session_id, canonical_name),
+                )
                 conn.execute(
                     """UPDATE relationships SET target_entity=?
                        WHERE session_id=? AND lower(target_entity)=lower(?)""",
                     (canonical_name, session_id, a),
-                )
-                # Collapse duplicate pairs that now have same source+target
-                # (keep the one with highest absolute values by re-aggregating)
-                conn.execute(
-                    """DELETE FROM relationships
-                       WHERE session_id=? AND source_entity=? AND target_entity=?
-                         AND rowid NOT IN (
-                           SELECT MAX(rowid) FROM relationships
-                           WHERE session_id=? AND source_entity=? AND target_entity=?
-                         )""",
-                    (session_id, canonical_name, canonical_name,
-                     session_id, canonical_name, canonical_name),
                 )
 
         # Rewrite memory entity JSON arrays

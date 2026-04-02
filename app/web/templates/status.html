@@ -492,7 +492,12 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ canonical, aliases }),
         });
-        if (!res.ok) throw new Error((await res.json()).detail || "Error");
+        if (!res.ok) {
+          const text = await res.text();
+          let detail = "Server error";
+          try { detail = JSON.parse(text).detail || text; } catch { detail = text.slice(0, 200); }
+          throw new Error(detail);
+        }
         status.textContent = `✓ Merged ${aliases.length} alias(es) into "${canonical}". Reload the page to see updated data.`;
         document.getElementById("merge-aliases").value = "";
         loadAliases();
