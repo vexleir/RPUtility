@@ -6,7 +6,7 @@ Manages the list of player-defined goals for a session.
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Optional
 
 from app.core.database import get_connection
@@ -71,7 +71,7 @@ class ObjectivesStore:
         with self._conn() as conn:
             conn.execute(
                 "UPDATE player_objectives SET status = ?, updated_at = ? WHERE id = ?",
-                (status.value, datetime.utcnow().isoformat(), objective_id),
+                (status.value, datetime.now(UTC).replace(tzinfo=None).isoformat(), objective_id),
             )
 
     def delete(self, objective_id: str) -> None:

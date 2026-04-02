@@ -8,7 +8,7 @@ conversation history, memory, scene state, and relationships.
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Optional
 
 from app.core.database import get_connection
@@ -74,7 +74,7 @@ class SessionManager:
         with self._conn() as conn:
             conn.execute(
                 "UPDATE sessions SET last_active = ? WHERE id = ?",
-                (datetime.utcnow().isoformat(), session_id),
+                (datetime.now(UTC).replace(tzinfo=None).isoformat(), session_id),
             )
 
     def increment_turn(self, session_id: str) -> None:
@@ -152,7 +152,6 @@ class SessionManager:
 
     def update_turn_content(self, turn_id: str, content: str) -> bool:
         """Update the content of a single turn. Returns True if a row was found."""
-        from datetime import datetime
         with self._conn() as conn:
             cur = conn.execute(
                 "UPDATE turns SET content=? WHERE id=?",

@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from typing import Optional
 
 from app.core.models import (
@@ -87,7 +87,7 @@ def consolidate_memories(
     """
     from collections import defaultdict
 
-    cutoff = datetime.utcnow() - timedelta(days=min_age_days)
+    cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=min_age_days)
 
     # Group eligible memories by type (exclude critical and fresh)
     groups: dict[str, list[MemoryEntry]] = defaultdict(list)

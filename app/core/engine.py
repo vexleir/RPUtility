@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from datetime import datetime, UTC
 from typing import Optional, Generator
 
 from app.core.config import Config
@@ -613,7 +614,7 @@ class RoleplayEngine:
         status: str | None = None,
     ) -> "PlayerObjective":
         from app.core.models import ObjectiveStatus
-        from datetime import datetime
+
         obj = self.objectives_store.get(objective_id)
         if not obj:
             raise ValueError(f"Objective not found: {objective_id}")
@@ -623,7 +624,7 @@ class RoleplayEngine:
             obj.description = description
         if status is not None:
             obj.status = ObjectiveStatus(status)
-        obj.updated_at = datetime.utcnow()
+        obj.updated_at = datetime.now(UTC).replace(tzinfo=None)
         self.objectives_store.save(obj)
         return obj
 
@@ -694,14 +695,14 @@ class RoleplayEngine:
         return npc
 
     def update_npc(self, npc_id: str, **kwargs) -> "NpcEntry":
-        from datetime import datetime
+
         npc = self.npc_store.get(npc_id)
         if not npc:
             raise ValueError(f"NPC not found: {npc_id}")
         for k, v in kwargs.items():
             if hasattr(npc, k) and v is not None:
                 setattr(npc, k, v)
-        npc.updated_at = datetime.utcnow()
+        npc.updated_at = datetime.now(UTC).replace(tzinfo=None)
         self.npc_store.save(npc)
         return npc
 
@@ -745,12 +746,12 @@ class RoleplayEngine:
         return self.clock_store.get_or_default(session_id)
 
     def set_clock(self, session_id: str, **kwargs) -> "WorldClock":
-        from datetime import datetime
+
         clock = self.clock_store.get_or_default(session_id)
         for k, v in kwargs.items():
             if hasattr(clock, k) and v is not None:
                 setattr(clock, k, v)
-        clock.updated_at = datetime.utcnow()
+        clock.updated_at = datetime.now(UTC).replace(tzinfo=None)
         self.clock_store.save(clock)
         return clock
 
@@ -789,12 +790,12 @@ class RoleplayEngine:
         return self.emotional_state_store.get_or_default(session_id)
 
     def set_emotional_state(self, session_id: str, **kwargs) -> "EmotionalState":
-        from datetime import datetime
+
         state = self.emotional_state_store.get_or_default(session_id)
         for k, v in kwargs.items():
             if hasattr(state, k) and v is not None:
                 setattr(state, k, v)
-        state.updated_at = datetime.utcnow()
+        state.updated_at = datetime.now(UTC).replace(tzinfo=None)
         self.emotional_state_store.save(state)
         return state
 
@@ -825,14 +826,14 @@ class RoleplayEngine:
         return item
 
     def update_item(self, item_id: str, **kwargs) -> "InventoryItem":
-        from datetime import datetime
+
         item = self.inventory_store.get(item_id)
         if not item:
             raise ValueError(f"Inventory item not found: {item_id}")
         for k, v in kwargs.items():
             if hasattr(item, k) and v is not None:
                 setattr(item, k, v)
-        item.updated_at = datetime.utcnow()
+        item.updated_at = datetime.now(UTC).replace(tzinfo=None)
         self.inventory_store.save(item)
         return item
 
@@ -893,14 +894,14 @@ class RoleplayEngine:
         return stat
 
     def update_stat(self, stat_id: str, **kwargs) -> "CharacterStat":
-        from datetime import datetime
+
         stat = self.stat_store.get(stat_id)
         if not stat:
             raise ValueError(f"Stat not found: {stat_id}")
         for k, v in kwargs.items():
             if hasattr(stat, k) and v is not None:
                 setattr(stat, k, v)
-        stat.updated_at = datetime.utcnow()
+        stat.updated_at = datetime.now(UTC).replace(tzinfo=None)
         self.stat_store.save(stat)
         return stat
 
@@ -941,12 +942,12 @@ class RoleplayEngine:
         return self.narrative_arc_store.get_or_default(session_id)
 
     def set_narrative_arc(self, session_id: str, **kwargs) -> "NarrativeArc":
-        from datetime import datetime
+
         arc = self.narrative_arc_store.get_or_default(session_id)
         for k, v in kwargs.items():
             if hasattr(arc, k) and v is not None:
                 setattr(arc, k, v)
-        arc.updated_at = datetime.utcnow()
+        arc.updated_at = datetime.now(UTC).replace(tzinfo=None)
         self.narrative_arc_store.save(arc)
         return arc
 
@@ -962,14 +963,14 @@ class RoleplayEngine:
         return faction
 
     def update_faction(self, faction_id: str, **kwargs) -> "Faction":
-        from datetime import datetime
+
         faction = self.faction_store.get(faction_id)
         if not faction:
             raise ValueError(f"Faction not found: {faction_id}")
         for k, v in kwargs.items():
             if hasattr(faction, k) and v is not None:
                 setattr(faction, k, v)
-        faction.updated_at = datetime.utcnow()
+        faction.updated_at = datetime.now(UTC).replace(tzinfo=None)
         self.faction_store.save(faction)
         return faction
 
@@ -1017,7 +1018,7 @@ class RoleplayEngine:
         return quest
 
     def update_quest(self, quest_id: str, **kwargs) -> "Quest":
-        from datetime import datetime
+
         from app.core.models import QuestStatus, ImportanceLevel
         quest = self.quest_store.get(quest_id)
         if not quest:
@@ -1031,12 +1032,12 @@ class RoleplayEngine:
                 quest.importance = ImportanceLevel(v)
             elif hasattr(quest, k):
                 setattr(quest, k, v)
-        quest.updated_at = datetime.utcnow()
+        quest.updated_at = datetime.now(UTC).replace(tzinfo=None)
         self.quest_store.save(quest)
         return quest
 
     def complete_quest_stage(self, quest_id: str, stage_id: str) -> "Quest":
-        from datetime import datetime
+
         quest = self.quest_store.get(quest_id)
         if not quest:
             raise ValueError(f"Quest not found: {quest_id}")
@@ -1044,7 +1045,7 @@ class RoleplayEngine:
             if stage.id == stage_id:
                 stage.completed = True
                 break
-        quest.updated_at = datetime.utcnow()
+        quest.updated_at = datetime.now(UTC).replace(tzinfo=None)
         self.quest_store.save(quest)
         return quest
 
@@ -1105,14 +1106,14 @@ class RoleplayEngine:
         return note
 
     def update_lore_note(self, note_id: str, **kwargs) -> "LoreNote":
-        from datetime import datetime
+
         note = self.lore_note_store.get(note_id)
         if not note:
             raise ValueError(f"Lore note not found: {note_id}")
         for k, v in kwargs.items():
             if hasattr(note, k) and v is not None:
                 setattr(note, k, v)
-        note.updated_at = datetime.utcnow()
+        note.updated_at = datetime.now(UTC).replace(tzinfo=None)
         self.lore_note_store.save(note)
         return note
 
@@ -1321,8 +1322,8 @@ class RoleplayEngine:
                     # Update last known location if the new one is more specific
                     if npc.last_known_location and not existing.last_known_location:
                         existing.last_known_location = npc.last_known_location
-                        from datetime import datetime
-                        existing.updated_at = datetime.utcnow()
+                
+                        existing.updated_at = datetime.now(UTC).replace(tzinfo=None)
                         self.npc_store.save(existing)
                 else:
                     self.npc_store.save(npc)
@@ -1376,8 +1377,7 @@ class RoleplayEngine:
                 extra_days = total_hours // 24
                 clock.hour = total_hours % 24
                 clock.day += extra_days
-                from datetime import datetime as _dt
-                clock.updated_at = _dt.utcnow()
+                clock.updated_at = datetime.now(UTC).replace(tzinfo=None)
                 self.clock_store.save(clock)
                 log.info("Clock advanced %dh → Day %d Month %d Year %d %s",
                          hours, clock.day, clock.month, clock.year, clock.time_of_day)

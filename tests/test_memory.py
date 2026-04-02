@@ -2,9 +2,11 @@
 Unit tests for memory storage, retrieval, and extraction parsing.
 """
 
+import sqlite3
+
 import pytest
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
 
 from app.core.database import ensure_db
@@ -14,12 +16,26 @@ from app.memory.retriever import retrieve, _score
 from app.memory.extractor import _parse_json_response, _build_entries
 
 
+def _seed_session(db_path: str, session_id: str) -> None:
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute(
+        "INSERT OR IGNORE INTO sessions(id, name, character_name, created_at, last_active)"
+        " VALUES (?, ?, '', datetime('now'), datetime('now'))",
+        (session_id, session_id),
+    )
+    conn.commit()
+    conn.close()
+
+
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 @pytest.fixture
 def db_path(tmp_path: Path) -> str:
     path = str(tmp_path / "test.db")
     ensure_db(path)
+    _seed_session(path, "sess1")
+    _seed_session(path, "sess2")
     return path
 
 
@@ -39,7 +55,7 @@ def make_memory(
     confidence: float = 1.0,
     days_ago: float = 0,
 ) -> MemoryEntry:
-    now = datetime.utcnow() - timedelta(days=days_ago)
+    now = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=days_ago)
     return MemoryEntry(
         session_id=session_id,
         created_at=now,

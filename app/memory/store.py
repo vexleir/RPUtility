@@ -13,7 +13,7 @@ Phase 2 additions:
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Optional
 
 from app.core.database import get_connection, json_encode, json_decode
@@ -90,7 +90,7 @@ class MemoryStore:
         with self._conn() as conn:
             conn.execute(
                 "UPDATE memories SET archived = 1, updated_at = ? WHERE id = ?",
-                (datetime.utcnow().isoformat(), memory_id),
+                (datetime.now(UTC).replace(tzinfo=None).isoformat(), memory_id),
             )
 
     def archive_many(self, memory_ids: list[str]) -> None:
@@ -154,7 +154,7 @@ class MemoryStore:
         with self._conn() as conn:
             conn.execute(
                 "UPDATE memories SET last_referenced_at = ? WHERE id = ?",
-                (datetime.utcnow().isoformat(), memory_id),
+                (datetime.now(UTC).replace(tzinfo=None).isoformat(), memory_id),
             )
 
     # ── Delete ────────────────────────────────────────────────────────────

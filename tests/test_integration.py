@@ -11,9 +11,11 @@ Tests verify:
   - Session restart recovers all state
 """
 
+import sqlite3
+
 import pytest
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, UTC
 from unittest.mock import MagicMock, patch
 
 from app.core.config import Config
@@ -36,6 +38,18 @@ from app.lorebooks.loader import parse_lorebook
 
 # ── Test fixtures ─────────────────────────────────────────────────────────────
 
+def _seed_session(db_path: str, session_id: str) -> None:
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute(
+        "INSERT OR IGNORE INTO sessions(id, name, character_name, created_at, last_active)"
+        " VALUES (?, ?, '', datetime('now'), datetime('now'))",
+        (session_id, session_id),
+    )
+    conn.commit()
+    conn.close()
+
+
 @pytest.fixture
 def test_config(tmp_path: Path) -> Config:
     c = Config()
@@ -45,6 +59,9 @@ def test_config(tmp_path: Path) -> Config:
     c.memory_extraction_enabled = False   # disable LLM calls in integration tests
     c.debug = False
     ensure_db(c.db_path)
+    # Seed bare session rows so subsystem tests can use hardcoded IDs with FK on
+    for sid in ("sess1", "sess2", "s"):
+        _seed_session(c.db_path, sid)
     return c
 
 
@@ -129,8 +146,8 @@ class TestMemoryPersistence:
         # Manually save a memory
         mem = MemoryEntry(
             session_id=session.id,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(UTC).replace(tzinfo=None),
+            updated_at=datetime.now(UTC).replace(tzinfo=None),
             type=MemoryType.EVENT,
             title="Dragon spotted",
             content="A red dragon was spotted flying over the mountains.",
@@ -151,8 +168,8 @@ class TestMemoryPersistence:
         # Pre-seed a high-importance memory with relevant entity
         mem = MemoryEntry(
             session_id=session.id,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(UTC).replace(tzinfo=None),
+            updated_at=datetime.now(UTC).replace(tzinfo=None),
             type=MemoryType.EVENT,
             title="Found ancient ruin",
             content="An ancient elven ruin was discovered in the forest.",

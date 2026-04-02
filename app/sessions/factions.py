@@ -4,7 +4,7 @@ Faction store — persists named factions and the player's standing with each.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, UTC
 
 from app.core.database import get_connection, json_encode, json_decode
 from app.core.models import Faction
@@ -81,7 +81,7 @@ class FactionStore:
         if not faction:
             return None
         faction.standing = max(-1.0, min(1.0, faction.standing + delta))
-        faction.updated_at = datetime.utcnow()
+        faction.updated_at = datetime.now(UTC).replace(tzinfo=None)
         self.save(faction)
         return faction
 

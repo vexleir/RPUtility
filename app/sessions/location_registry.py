@@ -4,7 +4,7 @@ Location Registry store — persists visited/known locations for a session.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, UTC
 
 from app.core.database import get_connection, json_encode, json_decode
 from app.core.models import LocationEntry
@@ -45,7 +45,7 @@ class LocationRegistryStore:
         Creates a new entry if the location is not yet registered.
         """
         existing = self.get_by_name(session_id, name)
-        now = datetime.utcnow()
+        now = datetime.now(UTC).replace(tzinfo=None)
         if existing:
             existing.visit_count += 1
             existing.last_visited = now

@@ -2,6 +2,8 @@
 Unit tests for scene state management.
 """
 
+import sqlite3
+
 import pytest
 from pathlib import Path
 
@@ -10,10 +12,26 @@ from app.core.models import SceneState
 from app.scene.state import SceneManager
 
 
+def _seed_session(db_path: str, session_id: str) -> None:
+    """Insert a minimal sessions row so FK constraints are satisfied."""
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute(
+        "INSERT OR IGNORE INTO sessions(id, name, character_name, created_at, last_active)"
+        " VALUES (?, ?, '', datetime('now'), datetime('now'))",
+        (session_id, session_id),
+    )
+    conn.commit()
+    conn.close()
+
+
 @pytest.fixture
 def db_path(tmp_path: Path) -> str:
     path = str(tmp_path / "test.db")
     ensure_db(path)
+    _seed_session(path, "sess1")
+    _seed_session(path, "sess2")
+    _seed_session(path, "new_session")
     return path
 
 

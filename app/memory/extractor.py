@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Optional
 
 from app.core.models import (
@@ -177,7 +177,7 @@ def _build_entries(
     active_characters: list[str] | None = None,
 ) -> list[MemoryEntry]:
     """Convert raw dicts from the model into validated MemoryEntry objects."""
-    now = datetime.utcnow()
+    now = datetime.now(UTC).replace(tzinfo=None)
     entries: list[MemoryEntry] = []
     # Build a case-insensitive allowlist for entity validation
     allowed_lower = {c.lower() for c in active_characters} if active_characters else None

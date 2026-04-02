@@ -7,7 +7,7 @@ Persisted to SQLite; one row per session (upserted on each update).
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Optional
 
 from app.core.database import get_connection, json_encode, json_decode
@@ -41,7 +41,7 @@ class SceneManager:
 
     def save(self, scene: SceneState) -> None:
         """Upsert the scene state for a session."""
-        scene.last_updated = datetime.utcnow()
+        scene.last_updated = datetime.now(UTC).replace(tzinfo=None)
         with self._conn() as conn:
             conn.execute(
                 """

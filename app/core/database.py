@@ -353,7 +353,7 @@ def _create_tables(conn: sqlite3.Connection) -> None:
         -- Conversation turns (kept for context window assembly)
         CREATE TABLE IF NOT EXISTS turns (
             id           TEXT PRIMARY KEY,
-            session_id   TEXT NOT NULL,
+            session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
             turn_number  INTEGER NOT NULL,
             role         TEXT NOT NULL,
             content      TEXT NOT NULL,
@@ -361,11 +361,9 @@ def _create_tables(conn: sqlite3.Connection) -> None:
         );
 
         -- Memory entries (the persistent world state)
-        -- No FK on session_id so subsystems can be unit-tested independently.
-        -- Session integrity is enforced at the engine layer.
         CREATE TABLE IF NOT EXISTS memories (
             id                  TEXT PRIMARY KEY,
-            session_id          TEXT NOT NULL,
+            session_id          TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
             created_at          TEXT NOT NULL,
             updated_at          TEXT NOT NULL,
             type                TEXT NOT NULL,
@@ -382,7 +380,7 @@ def _create_tables(conn: sqlite3.Connection) -> None:
 
         -- Scene state (one row per session, upserted on each update)
         CREATE TABLE IF NOT EXISTS scene_state (
-            session_id          TEXT PRIMARY KEY,
+            session_id          TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
             location            TEXT NOT NULL DEFAULT 'Unknown',
             active_characters   TEXT NOT NULL DEFAULT '[]',
             summary             TEXT NOT NULL DEFAULT '',
@@ -391,7 +389,7 @@ def _create_tables(conn: sqlite3.Connection) -> None:
 
         -- Relationship state (one row per source/target pair per session)
         CREATE TABLE IF NOT EXISTS relationships (
-            session_id      TEXT NOT NULL,
+            session_id      TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
             source_entity   TEXT NOT NULL,
             target_entity   TEXT NOT NULL,
             trust           REAL NOT NULL DEFAULT 0.0,

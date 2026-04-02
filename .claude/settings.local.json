@@ -42,7 +42,18 @@
       "Bash(python -m git_filter_repo --invert-paths --path data/rp_utility.db-shm --path data/rp_utility.db-wal --force)",
       "Bash(grep -E \"rp_utility\\\\.db|arcadia|batman|hotel_transylvania|vitalis\\\\.json|verdalis|arcadia-lore|Humiliation|SCP|vitalis-lorebook|^\\\\.env$\")",
       "Bash(git -C \"c:/Antigravity Projects/RP Utility\" remote add origin https://github.com/vexleir/RPUtility.git)",
-      "Bash(git -C \"c:/Antigravity Projects/RP Utility\" log --oneline)"
+      "Bash(git -C \"c:/Antigravity Projects/RP Utility\" log --oneline)",
+      "Bash(python -m pytest --tb=no -q)",
+      "Bash(sed -i 's/from datetime import datetime$/from datetime import datetime, UTC/' tests/test_prompting.py)",
+      "Bash(sed -i 's/from datetime import datetime, timedelta$/from datetime import datetime, timedelta, UTC/' tests/test_memory.py tests/test_phase2.py)",
+      "Bash(sed -i 's/from datetime import datetime$/from datetime import datetime, UTC/' tests/test_integration.py)",
+      "Bash(sed -i 's/datetime\\\\.utcnow\\(\\)/datetime.now\\(UTC\\).replace\\(tzinfo=None\\)/g' tests/test_integration.py tests/test_memory.py tests/test_phase2.py tests/test_prompting.py)",
+      "Bash(python -m pytest --tb=short -q)",
+      "Bash(python -m pytest tests/test_scene.py::TestSceneManager::test_save_and_get --tb=short -q)",
+      "Bash(python -m pytest tests/test_phase2.py tests/test_memory.py tests/test_integration.py --tb=line -q)",
+      "Bash(python -m pytest tests/test_integration.py --tb=line -q)",
+      "Bash(python -m pytest tests/test_relationships.py --tb=short -q)",
+      "Bash(python -m pytest tests/test_relationships.py::TestRelationshipTracker::test_get_all --tb=short -q)"
     ],
     "additionalDirectories": [
       "c:\\Users\\devio\\.claude\\projects\\c--Antigravity-Projects-RP-Utility\\memory"

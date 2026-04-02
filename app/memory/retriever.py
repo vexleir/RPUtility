@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Optional
 
 from app.core.models import MemoryEntry, ImportanceLevel, SceneState, CertaintyLevel
@@ -251,7 +251,7 @@ def _score(
 
 
 def _days_since(dt: datetime) -> float:
-    now = datetime.utcnow()
+    now = datetime.now(UTC).replace(tzinfo=None)
     if dt.tzinfo is not None:
         dt = dt.replace(tzinfo=None)
     delta = now - dt

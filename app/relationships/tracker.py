@@ -11,7 +11,7 @@ fear/hostility range 0.0 to 1.0.
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Optional
 
 from app.core.database import get_connection
@@ -73,7 +73,7 @@ class RelationshipTracker:
 
     def save(self, rel: RelationshipState) -> None:
         """Upsert a relationship state."""
-        rel.last_updated = datetime.utcnow()
+        rel.last_updated = datetime.now(UTC).replace(tzinfo=None)
         with self._conn() as conn:
             conn.execute(
                 """

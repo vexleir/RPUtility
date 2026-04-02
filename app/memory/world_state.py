@@ -12,7 +12,7 @@ consolidation pipeline or extracted directly from the narrative.
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Optional
 
 from app.core.database import get_connection, json_encode, json_decode
@@ -29,7 +29,7 @@ class WorldStateStore:
     # ── Write ─────────────────────────────────────────────────────────────
 
     def save(self, entry: WorldStateEntry) -> None:
-        entry.updated_at = datetime.utcnow()
+        entry.updated_at = datetime.now(UTC).replace(tzinfo=None)
         with self._conn() as conn:
             conn.execute(
                 """

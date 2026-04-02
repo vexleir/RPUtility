@@ -3,7 +3,7 @@ Unit tests for prompt assembly.
 """
 
 import pytest
-from datetime import datetime
+from datetime import datetime, UTC
 
 from app.core.config import Config
 from app.core.models import (
@@ -60,7 +60,7 @@ def lorebook_entries():
 
 @pytest.fixture
 def memories():
-    now = datetime.utcnow()
+    now = datetime.now(UTC).replace(tzinfo=None)
     return [
         MemoryEntry(
             session_id="s",
