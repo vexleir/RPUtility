@@ -27,7 +27,12 @@
       "Bash(curl -s \"http://localhost:8188/object_info/CheckpointLoaderSimple\")",
       "Bash(curl -s \"http://localhost:8188/models/checkpoints\")",
       "Bash(curl -s \"http://localhost:8188/object_info\")",
-      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(list\\(d.keys\\(\\)\\)[:10]\\)\")"
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(list\\(d.keys\\(\\)\\)[:10]\\)\")",
+      "Bash(git -C \"c:/Antigravity Projects/RP Utility\" ls-files data/)",
+      "Bash(git -C \"c:/Antigravity Projects/RP Utility\" ls-files .env)",
+      "Bash(git -C 'c:/Antigravity Projects/RP Utility' rm --cached .env data/rp_utility.db data/cards/arcadia.json data/cards/batman_the_dark_knight.png data/cards/hotel_transylvania.png data/cards/the-order-of-the-vitalis.json data/cards/the_world_of_verdalis_rpg.png data/lorebooks/arcadia-lorebook.json 'data/lorebooks/main_Humiliation Methods_world_info.json' 'data/lorebooks/main_SCP Foundation_world_info.json' data/lorebooks/the-order-of-the-vitalis-lorebook.json)",
+      "Bash(git -C \"c:/Antigravity Projects/RP Utility\" ls-files data/ .env)",
+      "Bash(git -C \"c:/Antigravity Projects/RP Utility\" status --short)"
     ],
     "additionalDirectories": [
       "c:\\Users\\devio\\.claude\\projects\\c--Antigravity-Projects-RP-Utility\\memory"

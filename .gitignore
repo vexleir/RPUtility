@@ -16,7 +16,10 @@ pip-wheel-metadata/
 .venv/
 venv/
 env/
+
+# ── Local configuration (contains secrets / personal settings) ────────────────
 .env
+.env.*
 
 # ── IDE / editor ──────────────────────────────────────────────────────────────
 .vscode/
