@@ -67,6 +67,11 @@ Certainty levels:
   lie        — known to be false but worth tracking
   myth       — ancient/legendary, may be distorted
 
+ENTITY RULES — very important:
+- The "entities" field MUST only contain names from the "Active characters" list provided below.
+- Do NOT add entity names from dialogue, backstory mentions, or characters not physically present.
+- If a memory concerns the whole scene, use only the names of characters who directly participated.
+
 Output ONLY a JSON array. Each object:
 {
   "type": "event|world_fact|character_detail|relationship_change|world_state|rumor|suspicion",
@@ -85,14 +90,14 @@ Output ONLY the JSON array, no other text."""
 
 EXTRACTION_USER_TEMPLATE = """Session context:
 - Location: {location}
-- Active characters: {characters}
+- Active characters (the ONLY valid entity names): {characters}
 
 Recent exchange:
 USER: {user_message}
 
 A: {assistant_message}
 
-Extract memorable facts as a JSON array."""
+Extract memorable facts as a JSON array. Remember: only use entity names from the active characters list above."""
 
 
 def extract_memories(
@@ -110,7 +115,8 @@ def extract_memories(
     Never raises — all failures return an empty list.
     """
     location = scene.location if scene else "Unknown"
-    characters = ", ".join(scene.active_characters) if scene else "Unknown"
+    active_characters: list[str] = scene.active_characters if scene and scene.active_characters else []
+    characters = ", ".join(active_characters) if active_characters else "Unknown"
 
     prompt = EXTRACTION_USER_TEMPLATE.format(
         location=location,
@@ -135,7 +141,7 @@ def extract_memories(
             logging.getLogger("rp_utility").debug("Extraction response:\n%s", raw)
 
         items = _parse_json_response(raw)
-        return _build_entries(items, session_id, source_turn_ids)
+        return _build_entries(items, session_id, source_turn_ids, active_characters)
 
     except Exception as e:
         if debug:
@@ -168,10 +174,13 @@ def _build_entries(
     items: list[dict],
     session_id: str,
     source_turn_ids: list[str],
+    active_characters: list[str] | None = None,
 ) -> list[MemoryEntry]:
     """Convert raw dicts from the model into validated MemoryEntry objects."""
     now = datetime.utcnow()
     entries: list[MemoryEntry] = []
+    # Build a case-insensitive allowlist for entity validation
+    allowed_lower = {c.lower() for c in active_characters} if active_characters else None
 
     for item in items:
         try:
@@ -195,6 +204,11 @@ def _build_entries(
             if certainty == CertaintyLevel.LIE:
                 confidence = min(confidence, 0.2)
 
+            # Strip entity names the LLM hallucinated outside the active character list
+            raw_entities = [str(e) for e in item.get("entities", [])]
+            if allowed_lower:
+                raw_entities = [e for e in raw_entities if e.lower() in allowed_lower]
+
             entry = MemoryEntry(
                 session_id=session_id,
                 created_at=now,
@@ -202,7 +216,7 @@ def _build_entries(
                 type=mem_type,
                 title=str(item.get("title", "Unnamed memory"))[:200],
                 content=str(item.get("content", ""))[:2000],
-                entities=[str(e) for e in item.get("entities", [])],
+                entities=raw_entities,
                 location=item.get("location") or None,
                 tags=[str(t) for t in item.get("tags", [])],
                 importance=importance,

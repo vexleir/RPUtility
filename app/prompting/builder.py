@@ -327,7 +327,8 @@ def _add_group(sections: list[str], mems: list[MemoryEntry], header: str) -> Non
     sections.append(f"{header}:")
     for m in mems:
         tag = " [CRITICAL]" if m.importance == ImportanceLevel.CRITICAL else ""
-        sections.append(f"  — {m.content}{tag}")
+        entities_tag = f" ({', '.join(m.entities)})" if m.entities else ""
+        sections.append(f"  — {m.content}{entities_tag}{tag}")
 
 
 def _certainty_tag(m: MemoryEntry) -> str:

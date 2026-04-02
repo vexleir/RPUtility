@@ -135,8 +135,18 @@ def retrieve(
     type_counts: dict[str, int] = {}
     result: list[MemoryEntry] = []
 
-    # Critical first (always included, respect cap)
+    # Critical first — include if they share an entity with the current scene,
+    # OR if they have no entities at all (world-level facts with no specific character).
+    scene_entities_lower = (
+        {e.lower() for e in scene.active_characters} | {scene.location.lower()}
+        if scene else set()
+    )
     for m in critical:
+        mem_entities_lower = {e.lower() for e in m.entities}
+        if mem_entities_lower and scene_entities_lower:
+            # Has entities — only include if at least one overlaps the scene
+            if not (mem_entities_lower & scene_entities_lower):
+                continue
         t = m.type.value
         cap = caps.get(t, 0)
         count = type_counts.get(t, 0)

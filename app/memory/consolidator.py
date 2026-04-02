@@ -39,6 +39,8 @@ Rules:
 - Keep permanent injuries, deaths, betrayals, alliances, and world changes
 - Discard trivial details, repeated phrasing, and filler
 - Write in 2-4 sentences, present-tense narrative style
+- IMPORTANT: Each memory includes a "(characters: ...)" label. Only include a character name in "entities" if they appear in at least one source memory's character list. Do NOT invent or merge character names.
+- The summary content must accurately attribute events to the correct characters — do not conflate who did what.
 - Output ONLY a JSON object:
 {
   "title": "Short descriptive title (max 10 words)",
@@ -105,22 +107,93 @@ def consolidate_memories(
         if len(group) < threshold:
             continue
 
-        if debug:
-            log.debug("Consolidating %d '%s' memories.", len(group), type_key)
+        # Split group into entity-coherent sub-groups so memories about
+        # different characters are never merged into the same summary.
+        subgroups = _split_by_entity_overlap(group, max_gap=threshold)
 
-        summary = _consolidate_group(
-            provider=provider,
-            group=group,
-            session_id=session_id,
-            mem_type=type_key,
-            location=location,
-            debug=debug,
-        )
-        if summary:
-            new_summaries.append(summary)
-            to_archive.extend(group)
+        for subgroup in subgroups:
+            if len(subgroup) < threshold:
+                continue
+
+            if debug:
+                log.debug("Consolidating %d '%s' memories (entity subgroup).", len(subgroup), type_key)
+
+            summary = _consolidate_group(
+                provider=provider,
+                group=subgroup,
+                session_id=session_id,
+                mem_type=type_key,
+                location=location,
+                debug=debug,
+            )
+            if summary:
+                new_summaries.append(summary)
+                to_archive.extend(subgroup)
 
     return new_summaries, to_archive
+
+
+def _split_by_entity_overlap(
+    memories: list[MemoryEntry],
+    max_gap: int,
+) -> list[list[MemoryEntry]]:
+    """
+    Split a flat list of memories into sub-groups where each group shares
+    at least one entity with at least one other member. Memories with no
+    entities are placed in their own singleton group.
+    Uses a simple union-find approach so transitively related memories stay together.
+    Sub-groups smaller than max_gap are merged with the largest group to avoid
+    producing too many tiny consolidations.
+    """
+    if not memories:
+        return []
+
+    n = len(memories)
+    parent = list(range(n))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> None:
+        parent[find(a)] = find(b)
+
+    # Build entity → memory index map
+    entity_to_indices: dict[str, list[int]] = {}
+    for i, m in enumerate(memories):
+        for e in m.entities:
+            entity_to_indices.setdefault(e.lower(), []).append(i)
+
+    # Union memories that share any entity
+    for indices in entity_to_indices.values():
+        for j in range(1, len(indices)):
+            union(indices[0], indices[j])
+
+    # Collect groups
+    groups_map: dict[int, list[MemoryEntry]] = {}
+    for i, m in enumerate(memories):
+        root = find(i)
+        groups_map.setdefault(root, []).append(m)
+
+    subgroups = list(groups_map.values())
+
+    # Merge tiny sub-groups into the largest one to avoid micro-consolidations
+    large = [g for g in subgroups if len(g) >= max_gap]
+    small = [g for g in subgroups if len(g) < max_gap]
+    if small and large:
+        biggest = max(large, key=len)
+        for sg in small:
+            biggest.extend(sg)
+    elif small and not large:
+        # All sub-groups are small — merge them all into one
+        merged: list[MemoryEntry] = []
+        for sg in small:
+            merged.extend(sg)
+        return [merged]
+
+    return large if large else subgroups
 
 
 def _consolidate_group(
@@ -133,7 +206,8 @@ def _consolidate_group(
 ) -> Optional[MemoryEntry]:
     """Call the LLM to produce one summary for a group of memories."""
     memory_list = "\n".join(
-        f"- [{m.importance.value}] {m.title}: {m.content}" for m in group
+        f"- [{m.importance.value}] {m.title} (characters: {', '.join(m.entities) or 'unknown'}): {m.content}"
+        for m in group
     )
     prompt = _CONSOLIDATION_USER.format(
         mem_type=mem_type,
