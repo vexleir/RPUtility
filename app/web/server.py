@@ -1080,15 +1080,15 @@ def api_export_session(session_id: str):
     bookmarks = engine.get_bookmarks(session_id)
     bookmarked_ids = {b.turn_id for b in bookmarks}
 
-    scene = engine.scene_manager.get(session_id)
-    clock = engine.clock_store.get(session_id)
-    clock_str = f"Day {clock.day}, Month {clock.month}, Year {clock.year} — {clock.time_of_day}" if clock else ""
+    scene = engine.scene_mgr.get(session_id)
+    clock = engine.clock_store.get_or_default(session_id)
+    clock_str = f"Day {clock.day}, Month {clock.month}, Year {clock.year} — {clock.time_of_day}"
 
     lines: list[str] = [
         f"# {session.name}",
         f"*Character: {session.character_name}*",
         f"*Location: {scene.location}*" if scene else "",
-        f"*{clock_str}*" if clock_str else "",
+        f"*{clock_str}*",
         "",
     ]
 
