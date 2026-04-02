@@ -1326,11 +1326,13 @@ class RoleplayEngine:
         provider,
     ) -> None:
         try:
+            clock = self.clock_store.get_or_default(session_id)
             update = extract_scene_update(
                 provider=provider,
                 user_message=user_message,
                 assistant_message=assistant_message,
                 scene=scene,
+                clock=clock,
                 debug=self.config.debug,
             )
             summary = update.get("summary") or None
@@ -1349,6 +1351,21 @@ class RoleplayEngine:
             effective_location = new_location or (scene.location if scene else None)
             if effective_location and effective_location.strip() and effective_location.lower() != "unknown":
                 self.location_store.record_visit(session_id, effective_location.strip())
+
+            # Advance the in-world clock by however many hours the LLM estimated.
+            hours = update.get("hours_passed")
+            if isinstance(hours, (int, float)) and hours > 0:
+                hours = int(hours)
+                total_hours = clock.hour + hours
+                extra_days = total_hours // 24
+                clock.hour = total_hours % 24
+                clock.day += extra_days
+                from datetime import datetime as _dt
+                clock.updated_at = _dt.utcnow()
+                self.clock_store.save(clock)
+                log.info("Clock advanced %dh → Day %d Month %d Year %d %s",
+                         hours, clock.day, clock.month, clock.year, clock.time_of_day)
+
             log.info("Scene summary updated.")
         except Exception as e:
             log.warning("Scene extraction failed (non-fatal): %s", e)

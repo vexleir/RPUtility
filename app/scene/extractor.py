@@ -25,19 +25,22 @@ Output ONLY a JSON object with these fields:
 {
   "summary": "1-3 sentence present-tense description of what is happening right now",
   "location": "current location name where the scene takes place",
-  "active_characters": ["name1", "name2"] or null if unchanged
+  "active_characters": ["name1", "name2"] or null if unchanged,
+  "hours_passed": <integer 0-48>
 }
 
 Rules:
 - summary: always provide an updated one; keep it concise and present-tense
 - location: ALWAYS output the current location name. If no location is explicitly stated, infer it from context (e.g. a tavern, a forest, a castle). If truly unknown, output "Unknown". Update if the characters moved somewhere new.
 - active_characters: only set if characters entered or left the scene
+- hours_passed: how many in-world hours elapsed during this exchange. Use 0 for a brief moment of dialogue, 1 for a short scene, 2-4 for a significant encounter or travel, 8 for a full journey or rest, 24+ only if the story explicitly skips days. Default to 1 if unclear.
 - Output ONLY the JSON object, no other text"""
 
 SCENE_USER_TEMPLATE = """Current scene:
 - Location: {location}
 - Present: {characters}
 - Previous summary: {summary}
+- Current in-world time: {time_of_day}
 
 Latest exchange:
 USER: {user_message}
@@ -54,21 +57,25 @@ def extract_scene_update(
     user_message: str,
     assistant_message: str,
     scene: Optional[SceneState],
+    clock=None,
     debug: bool = False,
 ) -> dict:
     """
     Ask the LLM to update the scene state based on this exchange.
-    Returns a dict with keys: summary, location (may be None), active_characters (may be None).
+    Returns a dict with keys: summary, location (may be None), active_characters (may be None),
+    hours_passed (int, 0 if absent).
     Never raises — on failure returns an empty dict.
     """
     location = scene.location if scene else "Unknown"
     characters = ", ".join(scene.active_characters) if scene and scene.active_characters else "Unknown"
     summary = scene.summary if scene and scene.summary else "(none yet)"
+    time_of_day = clock.time_of_day if clock else "midday"
 
     prompt = SCENE_USER_TEMPLATE.format(
         location=location,
         characters=characters,
         summary=summary,
+        time_of_day=time_of_day,
         user_message=user_message,
         assistant_message=assistant_message,
     )

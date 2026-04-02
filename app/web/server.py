@@ -114,8 +114,8 @@ class BookmarkRequest(BaseModel):
     note: str = ""
 
 
-class RegenerateRequest(BaseModel):
-    message: str
+class RegenerateRequest(ChatRequest):
+    pass
 
 
 class CreateNpcRequest(BaseModel):
