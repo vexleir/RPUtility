@@ -30,18 +30,21 @@ class SessionManager:
         character_name: str,
         lorebook_name: Optional[str] = None,
         model_name: Optional[str] = None,
+        scenario_text: Optional[str] = None,
     ) -> Session:
         session = Session(
             name=name,
             character_name=character_name,
             lorebook_name=lorebook_name,
             model_name=model_name,
+            scenario_text=scenario_text,
         )
         with self._conn() as conn:
             conn.execute(
                 """INSERT INTO sessions
-                     (id, name, character_name, lorebook_name, model_name, created_at, last_active, turn_count)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                     (id, name, character_name, lorebook_name, model_name,
+                      created_at, last_active, turn_count, scenario_text)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     session.id,
                     session.name,
@@ -51,6 +54,7 @@ class SessionManager:
                     session.created_at.isoformat(),
                     session.last_active.isoformat(),
                     session.turn_count,
+                    session.scenario_text,
                 ),
             )
         return session
@@ -223,6 +227,7 @@ def _row_to_session(row: sqlite3.Row) -> Session:
         created_at=datetime.fromisoformat(row["created_at"]),
         last_active=datetime.fromisoformat(row["last_active"]),
         turn_count=row["turn_count"],
+        scenario_text=row["scenario_text"] if "scenario_text" in row.keys() else None,
     )
 
 

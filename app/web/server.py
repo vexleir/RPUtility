@@ -64,10 +64,11 @@ def read_template(name: str, **substitutions: str) -> str:
 
 class CreateSessionRequest(BaseModel):
     name: str
-    character_name: str
+    character_name: str = "Character"    # default for Scenario Mode
     lorebook_name: Optional[str] = None
     model_name: Optional[str] = None
     location: str = "Unknown"
+    scenario_text: Optional[str] = None  # Scenario Mode — replaces a card file
 
 
 class ChatRequest(BaseModel):
@@ -587,6 +588,7 @@ def api_list_sessions():
             "turn_count": s.turn_count,
             "created_at": s.created_at.isoformat(),
             "last_active": s.last_active.isoformat(),
+            "scenario_text": s.scenario_text,
         }
         for s in sessions
     ]
@@ -597,20 +599,24 @@ def api_create_session(req: CreateSessionRequest):
     """Create a new roleplay session."""
     engine = get_engine()
 
-    if req.character_name not in engine._cards:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Character card '{req.character_name}' not found. "
-                   f"Available: {engine.list_cards()}",
-        )
+    # Card validation only applies when not using Scenario Mode
+    if not req.scenario_text:
+        if req.character_name not in engine._cards:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Character card '{req.character_name}' not found. "
+                       f"Available: {engine.list_cards()}",
+            )
 
+    char_name = req.character_name or "Character"
     session = engine.new_session(
         name=req.name,
-        character_name=req.character_name,
+        character_name=char_name,
         lorebook_name=req.lorebook_name or None,
         model_name=req.model_name or None,
         initial_location=req.location or "Unknown",
-        initial_characters=[req.character_name],
+        initial_characters=[char_name],
+        scenario_text=req.scenario_text or None,
     )
     return {
         "id": session.id,

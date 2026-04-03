@@ -194,6 +194,7 @@ class Session(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     last_active: datetime = Field(default_factory=datetime.utcnow)
     turn_count: int = 0
+    scenario_text: Optional[str] = None  # set when session created via Scenario Mode
 
 
 # ─────────────────────────────────────────────

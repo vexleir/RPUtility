@@ -156,8 +156,10 @@ class RoleplayEngine:
         initial_location: str = "Unknown",
         initial_characters: Optional[list[str]] = None,
         model_name: Optional[str] = None,
+        scenario_text: Optional[str] = None,
     ) -> Session:
-        session = self.sessions.create(name, character_name, lorebook_name, model_name)
+        session = self.sessions.create(name, character_name, lorebook_name, model_name,
+                                       scenario_text=scenario_text)
         chars = initial_characters or [character_name]
         self.scene_mgr.update(
             session.id,
@@ -318,10 +320,16 @@ class RoleplayEngine:
 
         card = self._cards.get(session.character_name)
         if not card:
-            raise ValueError(
-                f"Character card '{session.character_name}' not loaded. "
-                f"Available: {list(self._cards.keys())}"
-            )
+            if session.scenario_text:
+                card = CharacterCard(
+                    name=session.character_name,
+                    description=session.scenario_text,
+                )
+            else:
+                raise ValueError(
+                    f"Character card '{session.character_name}' not loaded. "
+                    f"Available: {list(self._cards.keys())}"
+                )
 
         ctx = self._gather_context(session, user_message)
 
@@ -411,10 +419,16 @@ class RoleplayEngine:
 
         card = self._cards.get(session.character_name)
         if not card:
-            raise ValueError(
-                f"Character card '{session.character_name}' not loaded. "
-                f"Available: {list(self._cards.keys())}"
-            )
+            if session.scenario_text:
+                card = CharacterCard(
+                    name=session.character_name,
+                    description=session.scenario_text,
+                )
+            else:
+                raise ValueError(
+                    f"Character card '{session.character_name}' not loaded. "
+                    f"Available: {list(self._cards.keys())}"
+                )
 
         ctx = self._gather_context(session, user_message)
 

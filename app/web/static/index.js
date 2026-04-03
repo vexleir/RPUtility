@@ -71,6 +71,9 @@ function sessionCard(s) {
   const turns = s.turn_count === 1 ? "1 turn" : `${s.turn_count} turns`;
   const age = timeAgo(s.last_active);
   const initial = (s.character_name[0] || "?").toUpperCase();
+  const modeTag = s.scenario_text
+    ? `<span title="Scenario session">📝 Scenario</span>`
+    : `<span>🎭 ${esc(s.character_name)}</span>`;
 
   return `
     <div class="session-card" id="session-${s.id}" data-session-name="${esc(s.name)}">
@@ -78,7 +81,7 @@ function sessionCard(s) {
       <div class="session-info">
         <div class="session-name">${esc(s.name)}</div>
         <div class="session-meta">
-          <span>🎭 ${esc(s.character_name)}</span>
+          ${modeTag}
           <span>🤖 <code style="font-size:11px">${esc(model)}</code></span>
           <span>💬 ${turns}</span>
           <span class="dim">${age}</span>
@@ -177,19 +180,37 @@ async function loadModels() {
   }
 }
 
+// ── Tab switching ─────────────────────────────────────────────────────────────
+function switchTab(name) {
+  $$(".tab-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+  $("#tab-card").classList.toggle("hidden", name !== "card");
+  $("#tab-scenario").classList.toggle("hidden", name !== "scenario");
+}
+
 // ── Create session ────────────────────────────────────────────────────────────
 async function onCreateSession(e) {
   e.preventDefault();
 
   const btn = $("#create-btn");
   const name = $("#session-name").value.trim();
-  const charName = $("#char-select").value;
-  const lorebookName = $("#lorebook-select").value || null;
   const modelName = $("#model-select").value || null;
   const location = $("#location-input").value.trim() || "Unknown";
+  const isScenario = !$("#tab-scenario").classList.contains("hidden");
 
   if (!name) return flashError("Session name is required.");
-  if (!charName) return flashError("Please select a character.");
+
+  let payload;
+  if (isScenario) {
+    const charName = $("#scenario-char-name").value.trim() || "Character";
+    const scenarioText = $("#scenario-text").value.trim();
+    if (!scenarioText) return flashError("Please describe the world and situation.");
+    payload = { name, character_name: charName, model_name: modelName, location, scenario_text: scenarioText };
+  } else {
+    const charName = $("#char-select").value;
+    const lorebookName = $("#lorebook-select").value || null;
+    if (!charName) return flashError("Please select a character.");
+    payload = { name, character_name: charName, lorebook_name: lorebookName, model_name: modelName, location };
+  }
 
   btn.disabled = true;
   btn.innerHTML = `<div class="spinner"></div> Creating…`;
@@ -198,7 +219,7 @@ async function onCreateSession(e) {
     const res = await fetch("/api/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, character_name: charName, lorebook_name: lorebookName, model_name: modelName, location }),
+      body: JSON.stringify(payload),
     });
 
     if (!res.ok) {
@@ -211,7 +232,7 @@ async function onCreateSession(e) {
 
   } catch (err) {
     btn.disabled = false;
-    btn.innerHTML = "Create Session";
+    btn.innerHTML = "Create Session →";
     flashError(err.message);
   }
 }

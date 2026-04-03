@@ -38,25 +38,10 @@
 
       <form id="create-form" autocomplete="off">
 
+        <!-- Shared fields (both modes) -->
         <div class="form-group">
           <label for="session-name">Session Name</label>
           <input type="text" id="session-name" placeholder="e.g. The Crosshaven Affair" required>
-        </div>
-
-        <div class="form-group">
-          <label for="char-select">Character Card</label>
-          <select id="char-select" required>
-            <option value="">Loading…</option>
-          </select>
-          <div class="card-preview hidden" id="card-preview"></div>
-        </div>
-
-        <div class="form-group">
-          <label for="lorebook-select">Lorebook <span class="dim">(optional)</span></label>
-          <select id="lorebook-select">
-            <option value="">Loading…</option>
-          </select>
-          <div class="form-hint">Lorebook entries are triggered by keywords in conversation.</div>
         </div>
 
         <div class="form-group">
@@ -70,6 +55,44 @@
         <div class="form-group">
           <label for="location-input">Starting Location <span class="dim">(optional)</span></label>
           <input type="text" id="location-input" placeholder="e.g. Tallow &amp; Ink Tavern, Crosshaven">
+        </div>
+
+        <!-- Mode tab bar -->
+        <div class="tab-bar">
+          <button type="button" class="tab-btn active" data-tab="card" onclick="switchTab('card')">Character Card</button>
+          <button type="button" class="tab-btn" data-tab="scenario" onclick="switchTab('scenario')">Scenario</button>
+        </div>
+
+        <!-- Tab: Character Card (existing) -->
+        <div id="tab-card">
+          <div class="form-group">
+            <label for="char-select">Character Card</label>
+            <select id="char-select">
+              <option value="">Loading…</option>
+            </select>
+            <div class="card-preview hidden" id="card-preview"></div>
+          </div>
+
+          <div class="form-group">
+            <label for="lorebook-select">Lorebook <span class="dim">(optional)</span></label>
+            <select id="lorebook-select">
+              <option value="">Loading…</option>
+            </select>
+            <div class="form-hint">Lorebook entries are triggered by keywords in conversation.</div>
+          </div>
+        </div>
+
+        <!-- Tab: Scenario (free-text) -->
+        <div id="tab-scenario" class="hidden">
+          <div class="form-group">
+            <label for="scenario-char-name">Character Name <span class="dim">(the AI's name)</span></label>
+            <input type="text" id="scenario-char-name" placeholder="e.g. Mira, The Narrator, DM">
+          </div>
+          <div class="form-group">
+            <label for="scenario-text">World, Characters &amp; Situation</label>
+            <textarea id="scenario-text" rows="10"
+              placeholder="Describe the world, the AI character, and the opening situation in your own words. This text becomes the AI's full context — include personality, setting, tone, and any rules for the roleplay."></textarea>
+          </div>
         </div>
 
         <button type="submit" id="create-btn" class="btn btn-primary" style="width:100%;justify-content:center">

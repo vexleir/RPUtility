@@ -335,6 +335,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
         )
     """)
 
+    # Scenario Mode: free-text scenario description stored on session row
+    try:
+        conn.execute("ALTER TABLE sessions ADD COLUMN scenario_text TEXT")
+    except Exception:
+        pass  # column already exists
+
 
 def _create_tables(conn: sqlite3.Connection) -> None:
     conn.executescript("""
