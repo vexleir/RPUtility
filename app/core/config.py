@@ -40,7 +40,7 @@ class Config(BaseSettings):
     # ── Generation parameters ──────────────────────────────────────────────
     temperature: float = 0.8
     max_tokens: int = 1024
-    context_window: int = 4096
+    context_window: int = 8192
 
     # ── Memory settings ────────────────────────────────────────────────────
     max_retrieved_memories: int = 10

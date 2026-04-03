@@ -27,7 +27,7 @@ def build_extraction_provider(config: Config) -> BaseProvider:
     """
     if config.provider == "ollama":
         model = config.extraction_model or config.ollama_model
-        return OllamaProvider(config.ollama_base_url, model)
+        return OllamaProvider(config.ollama_base_url, model, num_ctx=config.context_window)
     elif config.provider == "lmstudio":
         model = config.extraction_model or config.lmstudio_model
         return LMStudioProvider(config.lmstudio_base_url, model)

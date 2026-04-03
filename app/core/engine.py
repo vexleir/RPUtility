@@ -523,7 +523,8 @@ class RoleplayEngine:
         from app.providers.ollama import OllamaProvider
         from app.providers.lmstudio import LMStudioProvider
         if self.config.provider == "ollama":
-            return OllamaProvider(self.config.ollama_base_url, session.model_name)
+            return OllamaProvider(self.config.ollama_base_url, session.model_name,
+                                  num_ctx=self.config.context_window)
         return LMStudioProvider(self.config.lmstudio_base_url, session.model_name)
 
     def _stream_response(self, messages: list[dict], provider) -> str:
