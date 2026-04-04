@@ -367,6 +367,7 @@ function _buildMessageDiv(role, content, timestamp = null, animate = false, turn
 
   const bubble = document.createElement("div");
   bubble.className = "msg-bubble";
+  bubble.dataset.rawText = content;
   if (isAssistant) {
     bubble.innerHTML = renderMarkdown(resolveVars(content));
     bubble.classList.add("md-content");
@@ -479,10 +480,10 @@ function scheduleBackgroundRefresh() {
 // so this interval is just a safety net to catch anything that was missed.
 setInterval(() => {
   if (!isGenerating) {
-    refreshMemories();
-    refreshRelationships();
-    refreshWorldState();
     refreshObjectives();
+    refreshSidebarInventory();
+    refreshSidebarEffects();
+    refreshSidebarQuests();
   }
 }, 30000);
 
@@ -490,13 +491,12 @@ setInterval(() => {
 async function refreshSidebar() {
   await Promise.allSettled([
     refreshScene(),
-    refreshMemories(),
-    refreshRelationships(),
-    refreshWorldState(),
     refreshObjectives(),
     refreshClock(),
-    refreshStatusEffects(),
     refreshEmotionalState(),
+    refreshSidebarInventory(),
+    refreshSidebarEffects(),
+    refreshSidebarQuests(),
   ]);
 }
 
@@ -609,6 +609,48 @@ function updateMemoryCount(count) {
   }
 }
 
+async function deleteMemory(memoryId) {
+  if (!confirm("Delete this memory? The AI will no longer know this fact.")) return;
+  try {
+    const res = await fetch(`/api/session/${SESSION_ID}/memories/${memoryId}`, { method: "DELETE" });
+    if (!res.ok) throw new Error();
+    const el = document.getElementById(`mem-${memoryId}`);
+    if (el) el.remove();
+    const count = parseInt($("#memory-count").textContent || "0") - 1;
+    updateMemoryCount(Math.max(0, count));
+  } catch {
+    showError("Failed to delete memory.");
+  }
+}
+
+async function addCorrection() {
+  const input = $("#correction-input");
+  const text = input.value.trim();
+  if (!text) return;
+
+  // Derive a short title from the first ~60 chars
+  const title = text.length > 60 ? text.slice(0, 57) + "…" : text;
+
+  try {
+    const res = await fetch(`/api/session/${SESSION_ID}/memories`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Correction: " + title,
+        content: text,
+        type: "world_fact",
+        importance: "critical",
+        certainty: "confirmed",
+      }),
+    });
+    if (!res.ok) throw new Error();
+    input.value = "";
+    await refreshMemories();
+  } catch {
+    showError("Failed to save correction.");
+  }
+}
+
 function renderMemoryList(memories) {
   const list = $("#memory-list");
   if (!memories.length) {
@@ -625,8 +667,11 @@ function renderMemoryList(memories) {
     const certBadge = uncertain ? ` <span class="badge">${esc(m.certainty)}</span>` : "";
     const conf = uncertain ? ` · ${Math.round(m.confidence * 100)}% confidence` : "";
     return `
-      <div class="memory-item ${typeClass}">
-        <div class="memory-item-title">${esc(m.title)}${certBadge}</div>
+      <div class="memory-item ${typeClass}" id="mem-${esc(m.id)}">
+        <div class="memory-item-header">
+          <div class="memory-item-title">${esc(m.title)}${certBadge}</div>
+          <button class="mem-delete-btn" title="Delete this memory" onclick="deleteMemory('${esc(m.id)}')">✕</button>
+        </div>
         <div class="memory-item-content">${esc(m.content)}</div>
         <div class="memory-item-meta">
           <span class="badge">${m.type}</span>
@@ -707,35 +752,103 @@ function updateRelationships(rels) {
   }).join("");
 }
 
-// ── World-state sidebar ───────────────────────────────────────────────────────
-async function refreshWorldState() {
+// ── Inventory sidebar ─────────────────────────────────────────────────────────
+async function refreshSidebarInventory() {
+  const list = $("#sidebar-inventory-list");
+  if (!list) return;
   try {
-    const res = await fetch(`/api/session/${SESSION_ID}/world-state`);
-    renderWorldStateList(await res.json());
-  } catch {}
+    const items = await fetch(`/api/session/${SESSION_ID}/inventory`).then(r => r.json());
+    if (!items.length) {
+      list.innerHTML = `<div class="dim" style="font-size:12px;text-align:center;padding:8px">No items in inventory</div>`;
+      return;
+    }
+    list.innerHTML = items.map(item => {
+      const equipped = item.is_equipped ? ` <span class="badge" style="background:var(--accent-dim)">equipped</span>` : "";
+      const qty = item.quantity > 1 ? ` ×${item.quantity}` : "";
+      const condBad = item.condition && item.condition !== "good"
+        ? ` <span class="badge" style="background:#7f1d1d;color:#fca5a5">${esc(item.condition)}</span>` : "";
+      const desc = item.description ? `<div class="sidebar-item-desc">${esc(item.description)}</div>` : "";
+      return `<div class="sidebar-inv-item">
+        <div class="sidebar-inv-name">${esc(item.name)}${qty}${equipped}${condBad}</div>
+        ${desc}
+      </div>`;
+    }).join("");
+  } catch {
+    list.innerHTML = `<div class="dim" style="font-size:12px;text-align:center;padding:8px">—</div>`;
+  }
 }
 
-function renderWorldStateList(entries) {
-  const list = $("#world-state-list");
-  if (!entries.length) {
-    list.innerHTML = `<div class="dim" style="font-size:12px;text-align:center;padding:8px">No world state tracked yet</div>`;
-    return;
-  }
-
-  list.innerHTML = entries.map(e => {
-    const isCritical = e.importance === "critical";
-    const critClass = isCritical ? " critical" : "";
-    const critBadge = isCritical ? ` <span class="badge red" style="font-size:10px">critical</span>` : "";
-    return `
-      <div class="world-state-item${critClass}">
-        <div class="world-state-item-title">${esc(e.title)}${critBadge}</div>
-        <div class="world-state-item-content">${esc(e.content)}</div>
-        <div class="world-state-item-meta">
-          <span class="badge">${esc(e.category)}</span>
-          ${e.entities?.length ? `<span class="dim">${esc(e.entities.join(", "))}</span>` : ""}
+// ── Status effects sidebar ────────────────────────────────────────────────────
+async function refreshSidebarEffects() {
+  const list = $("#sidebar-effects-list");
+  if (!list) return;
+  try {
+    const effects = await fetch(`/api/session/${SESSION_ID}/status-effects`).then(r => r.json());
+    if (!effects.length) {
+      list.innerHTML = `<div class="dim" style="font-size:12px;text-align:center;padding:8px">No active effects</div>`;
+      // Also clear the compact scene chips
+      const chips = $("#scene-status-effects");
+      const item = $("#status-effects-item");
+      if (chips) chips.innerHTML = "";
+      if (item) item.style.display = "none";
+      return;
+    }
+    const icon = { buff: "✦", debuff: "✖", neutral: "◆" };
+    const typeColor = { buff: "#4ade80", debuff: "#f87171", neutral: "var(--text-muted)" };
+    list.innerHTML = effects.map(e => {
+      const dur = e.duration_turns > 0 ? `<span class="dim"> · ${e.duration_turns} turn${e.duration_turns !== 1 ? "s" : ""} left</span>` : "";
+      const desc = e.description ? `<div class="sidebar-item-desc">${esc(e.description)}</div>` : "";
+      return `<div class="sidebar-effect-item">
+        <div class="sidebar-effect-name" style="color:${typeColor[e.effect_type] || "var(--text)"}">
+          ${icon[e.effect_type] || "◆"} ${esc(e.name)}${dur}
         </div>
+        <div class="sidebar-effect-meta"><span class="badge">${esc(e.effect_type)}</span> <span class="dim">${esc(e.severity)}</span></div>
+        ${desc}
       </div>`;
-  }).join("");
+    }).join("");
+    // Also update the compact scene chips
+    const chips = $("#scene-status-effects");
+    const item = $("#status-effects-item");
+    if (chips && item) {
+      const cls = { buff: "effect-chip-buff", debuff: "effect-chip-debuff", neutral: "" };
+      chips.innerHTML = effects.map(e =>
+        `<span class="effect-chip ${cls[e.effect_type] || ""}" title="${esc(e.description)}">${icon[e.effect_type] || "◆"} ${esc(e.name)}</span>`
+      ).join(" ");
+      item.style.display = "";
+    }
+  } catch {
+    list.innerHTML = `<div class="dim" style="font-size:12px;text-align:center;padding:8px">—</div>`;
+  }
+}
+
+// ── Quest log sidebar ─────────────────────────────────────────────────────────
+async function refreshSidebarQuests() {
+  const list = $("#sidebar-quests-list");
+  if (!list) return;
+  try {
+    const quests = await fetch(`/api/session/${SESSION_ID}/quests`).then(r => r.json());
+    const active = quests.filter(q => q.status === "active");
+    if (!active.length) {
+      list.innerHTML = `<div class="dim" style="font-size:12px;text-align:center;padding:8px">No active quests</div>`;
+      return;
+    }
+    list.innerHTML = active.map(q => {
+      const giver = q.giver_npc_name ? `<span class="dim"> · from ${esc(q.giver_npc_name)}</span>` : "";
+      const stages = q.stages?.length ? `<div class="quest-stages">${
+        q.stages.map(s => `<div class="quest-stage ${s.completed ? "done" : ""}">
+          <span class="quest-check">${s.completed ? "✓" : "○"}</span>
+          <span>${esc(s.description)}</span>
+        </div>`).join("")
+      }</div>` : "";
+      const desc = q.description ? `<div class="sidebar-item-desc">${esc(q.description)}</div>` : "";
+      return `<div class="sidebar-quest-item">
+        <div class="sidebar-quest-name">${esc(q.title)}${giver}</div>
+        ${desc}${stages}
+      </div>`;
+    }).join("");
+  } catch {
+    list.innerHTML = `<div class="dim" style="font-size:12px;text-align:center;padding:8px">—</div>`;
+  }
 }
 
 // ── Regenerate ────────────────────────────────────────────────────────────────
@@ -906,6 +1019,84 @@ async function toggleBookmark(turnId, btn) {
   } catch {}
 }
 
+// ── Turn edit / delete ────────────────────────────────────────────────────────
+function openTurnEditor(turnId, btn) {
+  // Find the bubble sibling of the clicked button
+  const msgDiv = btn.closest(".message");
+  if (!msgDiv) return;
+  const bubble = msgDiv.querySelector(".msg-bubble");
+  if (!bubble) return;
+
+  // Don't open a second editor on the same turn
+  if (msgDiv.querySelector(".turn-edit-form")) return;
+
+  const originalText = bubble.dataset.rawText || bubble.textContent;
+  const role = msgDiv.classList.contains("assistant") ? "assistant" : "user";
+
+  const form = document.createElement("div");
+  form.className = "turn-edit-form";
+  form.innerHTML = `
+    <textarea class="turn-edit-textarea">${esc(originalText)}</textarea>
+    <div class="turn-edit-actions">
+      <button class="btn btn-secondary btn-sm" onclick="saveTurnEdit('${esc(turnId)}', this)">Save</button>
+      <button class="btn btn-ghost btn-sm" onclick="cancelTurnEdit(this)">Cancel</button>
+      <button class="btn btn-danger btn-sm" onclick="deleteTurn('${esc(turnId)}', this)" style="margin-left:auto">Delete</button>
+    </div>`;
+  bubble.after(form);
+  form.querySelector("textarea").focus();
+}
+
+function cancelTurnEdit(btn) {
+  btn.closest(".turn-edit-form").remove();
+}
+
+async function saveTurnEdit(turnId, btn) {
+  const form = btn.closest(".turn-edit-form");
+  const textarea = form.querySelector("textarea");
+  const newContent = textarea.value.trim();
+  if (!newContent) return;
+
+  btn.disabled = true;
+  btn.textContent = "Saving…";
+  try {
+    const res = await fetch(`/api/session/${SESSION_ID}/turns/${turnId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: newContent }),
+    });
+    if (!res.ok) throw new Error("Save failed");
+    // Update the bubble in-place
+    const msgDiv = form.closest(".message");
+    const bubble = msgDiv.querySelector(".msg-bubble");
+    const role = msgDiv.classList.contains("assistant") ? "assistant" : "user";
+    bubble.dataset.rawText = newContent;
+    if (role === "assistant") {
+      bubble.innerHTML = renderMarkdown(resolveVars(newContent));
+    } else {
+      bubble.textContent = resolveVars(newContent);
+    }
+    form.remove();
+  } catch {
+    btn.disabled = false;
+    btn.textContent = "Save";
+    showError("Failed to save turn.");
+  }
+}
+
+async function deleteTurn(turnId, btn) {
+  if (!confirm("Delete this message? This cannot be undone.")) return;
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/session/${SESSION_ID}/turns/${turnId}`, { method: "DELETE" });
+    if (!res.ok) throw new Error("Delete failed");
+    const msgDiv = btn.closest(".message");
+    msgDiv.remove();
+  } catch {
+    btn.disabled = false;
+    showError("Failed to delete turn.");
+  }
+}
+
 // ── Recap banner ──────────────────────────────────────────────────────────────
 async function loadRecap() {
   try {
@@ -1042,9 +1233,6 @@ function setupSidebarCollapse() {
     });
   });
 
-  // Refresh memory list button
-  const refreshBtn = $("#refresh-memories-btn");
-  if (refreshBtn) refreshBtn.addEventListener("click", refreshMemories);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1154,7 +1342,7 @@ function savePersona() {
 // GENERATION SETTINGS
 // ══════════════════════════════════════════════════════════════════════════════
 
-const GEN_SETTINGS_KEY = "rp_gen_settings";
+const GEN_SETTINGS_KEY = "rp_gen_settings_" + SESSION_ID;
 const GEN_DEFAULTS = {
   temperature: 0.80, top_p: 0.95, top_k: 0, min_p: 0.05,
   repeat_penalty: 1.10, max_tokens: 1024, seed: -1,
@@ -1495,75 +1683,6 @@ function _insertGeneratedImage(dataUrl, prompt) {
 }
 
 
-// ══════════════════════════════════════════════════════════════════════════════
-// TURN EDITOR
-// ══════════════════════════════════════════════════════════════════════════════
-
-function openTurnEditor(turnId, btn) {
-  // Find the message div and bubble
-  const msgDiv = btn.closest(".message");
-  if (!msgDiv) return;
-  const bubble = msgDiv.querySelector(".msg-bubble");
-  if (!bubble) return;
-
-  // Get current plain text (strip HTML for assistant messages)
-  const currentText = bubble.innerText || bubble.textContent || "";
-
-  // Build inline editor replacing the bubble
-  const editor = document.createElement("div");
-  editor.className = "turn-editor";
-  editor.innerHTML = `
-    <textarea class="turn-editor-textarea">${esc(currentText.trim())}</textarea>
-    <div class="turn-editor-actions">
-      <span class="turn-editor-hint">Edit the message content. Memories and relationships are NOT re-extracted.</span>
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-secondary btn-sm" onclick="cancelTurnEditor(this)">Cancel</button>
-        <button class="btn btn-primary btn-sm" onclick="saveTurnEdit('${esc(turnId)}', this)">Save</button>
-      </div>
-    </div>`;
-  bubble.replaceWith(editor);
-  editor.querySelector("textarea").focus();
-}
-
-function cancelTurnEditor(btn) {
-  location.reload();
-}
-
-async function saveTurnEdit(turnId, btn) {
-  const editor = btn.closest(".turn-editor");
-  const textarea = editor.querySelector("textarea");
-  const newContent = textarea.value.trim();
-  if (!newContent) return;
-
-  btn.disabled = true;
-  btn.textContent = "Saving…";
-  try {
-    const res = await fetch(`/api/session/${SESSION_ID}/turns/${turnId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: newContent }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: "Error" }));
-      throw new Error(err.detail || "Save failed");
-    }
-    // Replace editor with updated bubble
-    const msgDiv = editor.closest(".message");
-    const role = msgDiv.classList.contains("assistant") ? "assistant" : "user";
-    const newBubble = document.createElement("div");
-    newBubble.className = "msg-bubble" + (role === "assistant" ? " md-content" : "");
-    if (role === "assistant") {
-      newBubble.innerHTML = renderMarkdown(newContent);
-    } else {
-      newBubble.textContent = newContent;
-    }
-    editor.replaceWith(newBubble);
-  } catch (err) {
-    btn.disabled = false;
-    btn.textContent = "Save";
-    alert("Save failed: " + err.message);
-  }
-}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // MODAL HELPERS
@@ -1576,6 +1695,7 @@ function openModal(id) {
   if (id === "gen-settings-modal") loadGenSettings();
   if (id === "persona-modal") loadPersona();
   if (id === "bg-modal") applyStoredBackground();
+  if (id === "skill-check-modal") loadSkillCheckStats();
 }
 
 function closeModal(id) {
@@ -1585,4 +1705,66 @@ function closeModal(id) {
 
 function backdropClose(event, id) {
   if (event.target === event.currentTarget) closeModal(id);
+}
+
+// ── Skill Checks ──────────────────────────────────────────────────────────────
+async function loadSkillCheckStats() {
+  const sel = document.getElementById("skill-check-stat");
+  if (!sel) return;
+  try {
+    const stats = await fetch(`/api/session/${SESSION_ID}/stats`).then(r => r.json());
+    // Reset options
+    sel.innerHTML = `<option value="">— free roll (no modifier) —</option>`;
+    for (const s of stats) {
+      const mod = s.modifier >= 0 ? `+${s.modifier}` : s.modifier;
+      sel.add(new Option(`${s.name} (${mod})`, s.name));
+    }
+  } catch {}
+  // Clear previous result
+  const resultEl = document.getElementById("skill-check-result");
+  if (resultEl) resultEl.style.display = "none";
+}
+
+async function rollSkillCheck() {
+  const statName = document.getElementById("skill-check-stat").value;
+  const dc = parseInt(document.getElementById("skill-check-dc").value) || 15;
+  const dice = document.getElementById("skill-check-dice").value.trim() || "d20";
+  const context = document.getElementById("skill-check-context").value.trim();
+
+  const resultEl = document.getElementById("skill-check-result");
+  resultEl.style.display = "none";
+
+  try {
+    const res = await fetch(`/api/session/${SESSION_ID}/stats/roll`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stat_name: statName || "free", difficulty: dc, dice, narrative_context: context }),
+    });
+    if (!res.ok) throw new Error("Roll failed");
+    const r = await res.json();
+
+    const outcomeColors = {
+      critical_success: "#4ade80",
+      success: "#86efac",
+      failure: "#fca5a5",
+      critical_failure: "#f87171",
+    };
+    const color = outcomeColors[r.outcome] || "var(--text)";
+    const modStr = r.modifier !== 0 ? ` ${r.modifier >= 0 ? "+" : ""}${r.modifier}` : "";
+    const label = r.outcome.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+    resultEl.innerHTML = `
+      <div class="skill-check-result-card">
+        <div class="skill-check-outcome" style="color:${color}">${label}</div>
+        <div class="skill-check-roll-detail">
+          Rolled <strong>${r.roll}</strong>${modStr} = <strong>${r.total}</strong> vs DC <strong>${dc}</strong>
+          ${statName ? `<span class="dim"> (${esc(statName)})</span>` : ""}
+        </div>
+        ${context ? `<div class="dim" style="font-size:12px;margin-top:4px">${esc(context)}</div>` : ""}
+      </div>`;
+    resultEl.style.display = "block";
+  } catch {
+    resultEl.innerHTML = `<div class="dim">Roll failed. Make sure the server is running.</div>`;
+    resultEl.style.display = "block";
+  }
 }

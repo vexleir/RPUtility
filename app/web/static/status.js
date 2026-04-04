@@ -314,18 +314,38 @@ async function loadContradictions() {
     }
 
     $("#contra-body").innerHTML = flags.map(f => `
-      <div class="contra-card">
+      <div class="contra-card" id="contra-${esc(f.id)}">
         <div class="contra-header">
           <span class="badge yellow">contradiction</span>
           <span class="dim">${new Date(f.detected_at).toLocaleString()}</span>
         </div>
         <div class="contra-description">${esc(f.description)}</div>
-        <div class="contra-meta">
-          <span class="dim">Resolution: <strong style="color:var(--text-muted)">${esc(f.resolution)}</strong></span>
+        <div class="contra-resolve-actions">
+          <span class="dim" style="font-size:11px">Resolve:</span>
+          <button class="btn btn-sm btn-secondary" onclick="resolveContradiction('${esc(f.id)}','keep_new')">Keep new</button>
+          <button class="btn btn-sm btn-secondary" onclick="resolveContradiction('${esc(f.id)}','keep_old')">Keep old</button>
+          <button class="btn btn-sm btn-ghost" onclick="resolveContradiction('${esc(f.id)}','dismiss')">Dismiss</button>
         </div>
       </div>`).join("");
   } catch {
     $("#contra-body").innerHTML = `<div class="dim">Could not load contradiction flags.</div>`;
+  }
+}
+
+async function resolveContradiction(flagId, action) {
+  try {
+    const res = await fetch(`/api/session/${SESSION_ID}/contradictions/${flagId}/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    });
+    if (!res.ok) throw new Error("Failed");
+    // Remove the card from DOM and reload count
+    const card = document.getElementById(`contra-${flagId}`);
+    if (card) card.remove();
+    await loadContradictions();
+  } catch {
+    alert("Failed to resolve contradiction. Please try again.");
   }
 }
 

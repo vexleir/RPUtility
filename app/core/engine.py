@@ -288,6 +288,11 @@ class RoleplayEngine:
         factions = self.faction_store.get_all(session_id)
         quests = self.quest_store.get_active(session_id)
 
+        # Look up rich location data for current scene location
+        location_entry = None
+        if scene and scene.location and scene.location.lower() != "unknown":
+            location_entry = self.location_store.get_by_name(session_id, scene.location)
+
         return dict(
             lorebook_entries=lorebook_entries,
             scene=scene,
@@ -306,6 +311,7 @@ class RoleplayEngine:
             narrative_arc=narrative_arc,
             factions=factions,
             quests=quests,
+            location_entry=location_entry,
         )
 
     # ── Main chat interface ───────────────────────────────────────────────
@@ -359,6 +365,7 @@ class RoleplayEngine:
             narrative_arc=ctx["narrative_arc"],
             factions=ctx["factions"],
             quests=ctx["quests"],
+            location_entry=ctx["location_entry"],
         )
 
         if self.config.show_prompt or self.config.debug:
@@ -394,6 +401,7 @@ class RoleplayEngine:
         self.sessions.add_turn(assistant_turn)
         self.sessions.increment_turn(session_id)
         self.sessions.touch(session_id)
+        self.status_effect_store.tick(session_id)
 
         for mem in ctx["relevant_memories"]:
             self.memory_store.mark_referenced(mem.id)
@@ -458,6 +466,7 @@ class RoleplayEngine:
             narrative_arc=ctx["narrative_arc"],
             factions=ctx["factions"],
             quests=ctx["quests"],
+            location_entry=ctx["location_entry"],
         )
 
         if self.config.show_prompt or self.config.debug:
@@ -501,6 +510,7 @@ class RoleplayEngine:
         self.sessions.add_turn(assistant_turn)
         self.sessions.increment_turn(session_id)
         self.sessions.touch(session_id)
+        self.status_effect_store.tick(session_id)
 
         for mem in ctx["relevant_memories"]:
             self.memory_store.mark_referenced(mem.id)

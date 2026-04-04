@@ -205,6 +205,11 @@ class MemoryStore:
             ).fetchall()
         return [_row_to_flag(r) for r in rows]
 
+    def delete_contradiction_flag(self, flag_id: str) -> bool:
+        with self._conn() as conn:
+            cur = conn.execute("DELETE FROM contradiction_flags WHERE id = ?", (flag_id,))
+        return cur.rowcount > 0
+
 
 # ── Row → model helpers ───────────────────────────────────────────────────────
 

@@ -169,6 +169,12 @@ class SessionManager:
             row = conn.execute("SELECT * FROM turns WHERE id=?", (turn_id,)).fetchone()
         return _row_to_turn(row) if row else None
 
+    def delete_turn_by_id(self, turn_id: str) -> bool:
+        """Delete a single turn by ID. Returns True if a row was found and deleted."""
+        with self._conn() as conn:
+            cur = conn.execute("DELETE FROM turns WHERE id=?", (turn_id,))
+        return cur.rowcount > 0
+
     def delete_turns_from(self, session_id: str, turn_number: int) -> int:
         """Delete all turns with turn_number >= turn_number. Returns count deleted."""
         with self._conn() as conn:

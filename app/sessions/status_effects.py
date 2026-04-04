@@ -70,6 +70,35 @@ class StatusEffectStore:
             ).fetchall()
         return [_row_to_effect(r) for r in rows]
 
+    def tick(self, session_id: str) -> list[str]:
+        """
+        Decrement duration_turns by 1 for all timed effects (duration_turns > 0).
+        Delete effects that reach 0. Returns names of expired effects.
+        Effects with duration_turns == 0 are permanent and are not ticked.
+        """
+        with get_connection(self._db) as conn:
+            # Find effects about to expire (duration = 1 after decrement)
+            expiring = conn.execute(
+                "SELECT id, name FROM status_effects WHERE session_id=? AND duration_turns=1",
+                (session_id,),
+            ).fetchall()
+            expired_names = [r["name"] for r in expiring]
+            expired_ids = [r["id"] for r in expiring]
+
+            # Decrement all timed effects
+            conn.execute(
+                "UPDATE status_effects SET duration_turns=duration_turns-1 WHERE session_id=? AND duration_turns>0",
+                (session_id,),
+            )
+            # Delete newly-expired ones
+            if expired_ids:
+                placeholders = ",".join("?" * len(expired_ids))
+                conn.execute(
+                    f"DELETE FROM status_effects WHERE id IN ({placeholders})",
+                    expired_ids,
+                )
+        return expired_names
+
 
 def _row_to_effect(row) -> StatusEffect:
     return StatusEffect(

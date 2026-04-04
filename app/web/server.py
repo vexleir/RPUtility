@@ -786,6 +786,52 @@ def api_get_memories(session_id: str):
     ]
 
 
+class CreateMemoryRequest(BaseModel):
+    title: str
+    content: str
+    type: str = "world_fact"
+    importance: str = "critical"
+    certainty: str = "confirmed"
+    entities: list[str] = []
+
+
+@app.post("/api/session/{session_id}/memories", status_code=201)
+def api_create_memory(session_id: str, req: CreateMemoryRequest):
+    """Manually create a memory entry (e.g. to correct a hallucination)."""
+    from app.core.models import MemoryEntry, MemoryType, ImportanceLevel, CertaintyLevel
+    engine = get_engine()
+    _resolve(engine, session_id)
+    try:
+        mem_type = MemoryType(req.type)
+        importance = ImportanceLevel(req.importance)
+        certainty = CertaintyLevel(req.certainty)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    entry = MemoryEntry(
+        session_id=session_id,
+        type=mem_type,
+        title=req.title.strip(),
+        content=req.content.strip(),
+        importance=importance,
+        certainty=certainty,
+        entities=req.entities,
+        confidence=1.0,
+    )
+    engine.memory_store.save(entry)
+    return {"id": entry.id, "title": entry.title, "importance": entry.importance.value}
+
+
+@app.delete("/api/session/{session_id}/memories/{memory_id}", status_code=204)
+def api_delete_memory(session_id: str, memory_id: str):
+    """Permanently delete a single memory entry."""
+    engine = get_engine()
+    _resolve(engine, session_id)
+    mem = engine.memory_store.get(memory_id)
+    if not mem or mem.session_id != session_id:
+        raise HTTPException(404, "Memory not found.")
+    engine.memory_store.delete(memory_id)
+
+
 @app.get("/api/session/{session_id}/memories/archived")
 def api_get_archived_memories(session_id: str):
     """Return consolidated-away (archived) memories for debug inspection."""
@@ -846,6 +892,39 @@ def api_get_contradictions(session_id: str):
         }
         for f in flags
     ]
+
+
+class ResolveContradictionRequest(BaseModel):
+    action: str  # "keep_new" | "keep_old" | "dismiss"
+
+
+@app.post("/api/session/{session_id}/contradictions/{flag_id}/resolve", status_code=200)
+def api_resolve_contradiction(session_id: str, flag_id: str, req: ResolveContradictionRequest):
+    """
+    Resolve a contradiction flag.
+    - keep_new: archive the existing (old) memory, delete the flag
+    - keep_old: archive the new memory, delete the flag
+    - dismiss: delete the flag without archiving either memory
+    """
+    engine = get_engine()
+    _resolve(engine, session_id)
+
+    flags = engine.get_contradiction_flags(session_id)
+    flag = next((f for f in flags if f.id == flag_id), None)
+    if not flag:
+        raise HTTPException(404, "Contradiction flag not found.")
+
+    action = req.action
+    if action not in ("keep_new", "keep_old", "dismiss"):
+        raise HTTPException(400, "action must be keep_new, keep_old, or dismiss")
+
+    if action == "keep_new" and flag.existing_memory_id:
+        engine.memory_store.archive(flag.existing_memory_id)
+    elif action == "keep_old" and flag.new_memory_id:
+        engine.memory_store.archive(flag.new_memory_id)
+
+    engine.memory_store.delete_contradiction_flag(flag_id)
+    return {"resolved": True, "action": action}
 
 
 @app.get("/api/session/{session_id}/relationships")
@@ -966,6 +1045,16 @@ def api_edit_turn(session_id: str, turn_id: str, req: EditTurnRequest):
     if not found:
         raise HTTPException(404, f"Turn '{turn_id}' not found.")
     return {"id": turn_id, "content": content}
+
+
+@app.delete("/api/session/{session_id}/turns/{turn_id}", status_code=204)
+def api_delete_turn(session_id: str, turn_id: str):
+    """Delete a single conversation turn by ID."""
+    engine = get_engine()
+    _resolve(engine, session_id)
+    found = engine.sessions.delete_turn_by_id(turn_id)
+    if not found:
+        raise HTTPException(404, f"Turn '{turn_id}' not found.")
 
 
 # ── API: character aliases ─────────────────────────────────────────────────────

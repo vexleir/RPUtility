@@ -31,6 +31,7 @@
       <button class="btn btn-ghost btn-sm" id="search-toggle-btn" title="Search conversation">🔍</button>
       <button class="btn btn-ghost btn-sm" onclick="openModal('persona-modal')" title="Player persona">👤</button>
       <button class="btn btn-ghost btn-sm" onclick="openModal('gen-settings-modal')" title="Generation settings">⚙️</button>
+      <button class="btn btn-ghost btn-sm" onclick="openModal('skill-check-modal')" title="Roll a skill check">🎲</button>
       <button class="btn btn-ghost btn-sm" onclick="openModal('bg-modal')" title="Chat background">🖼</button>
       <a href="/chat/{{SESSION_ID}}/recap" class="btn btn-ghost btn-sm" title="Story recap for returning players">📖 Recap</a>
       <a href="/api/session/{{SESSION_ID}}/export" class="btn btn-ghost btn-sm" title="Export session as markdown" download>⬇</a>
@@ -141,44 +142,41 @@
         </div>
       </div>
 
-      <!-- Memories -->
-      <div class="sidebar-section" id="memories-section">
+      <!-- Inventory -->
+      <div class="sidebar-section" id="inventory-section">
         <div class="sidebar-section-header">
-          <span>🧠 Memory &nbsp;<span id="memory-count" style="color:var(--accent-light)">0</span></span>
-          <div style="display:flex;align-items:center;gap:8px">
-            <button class="btn btn-ghost btn-sm" id="refresh-memories-btn" style="padding:2px 8px;font-size:11px" title="Refresh memories">↺</button>
-            <span class="sidebar-chevron">▼</span>
-          </div>
+          <span>🎒 Inventory</span>
+          <span class="sidebar-chevron">▼</span>
         </div>
         <div class="sidebar-content">
-          <div class="memory-list" id="memory-list">
+          <div id="sidebar-inventory-list">
             <div class="dim" style="font-size:12px;text-align:center">Loading…</div>
           </div>
         </div>
       </div>
 
-      <!-- Relationships -->
-      <div class="sidebar-section" id="rels-section">
+      <!-- Status Effects -->
+      <div class="sidebar-section" id="effects-section">
         <div class="sidebar-section-header">
-          <span>🤝 Relationships</span>
+          <span>⚡ Status Effects</span>
           <span class="sidebar-chevron">▼</span>
         </div>
         <div class="sidebar-content">
-          <div id="rels-container">
+          <div id="sidebar-effects-list">
             <div class="dim" style="font-size:12px;text-align:center">Loading…</div>
           </div>
         </div>
       </div>
 
-      <!-- World State -->
-      <div class="sidebar-section collapsed" id="world-state-section">
+      <!-- Quest Log -->
+      <div class="sidebar-section" id="quests-section">
         <div class="sidebar-section-header">
-          <span>🌍 World State</span>
+          <span>📜 Quest Log</span>
           <span class="sidebar-chevron">▼</span>
         </div>
         <div class="sidebar-content">
-          <div class="world-state-list" id="world-state-list">
-            <div class="dim" style="font-size:12px;text-align:center">No world state tracked yet</div>
+          <div id="sidebar-quests-list">
+            <div class="dim" style="font-size:12px;text-align:center">Loading…</div>
           </div>
         </div>
       </div>
@@ -488,6 +486,43 @@
       <div class="rp-modal-footer">
         <button class="btn btn-secondary" onclick="closeModal('img-gen-modal')">Cancel</button>
         <button class="btn btn-primary" id="img-gen-submit-btn" onclick="submitImageGen()">Generate</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Skill Check modal ──────────────────────────────────────── -->
+  <div class="rp-modal-backdrop" id="skill-check-modal" style="display:none" onclick="backdropClose(event,'skill-check-modal')">
+    <div class="rp-modal">
+      <div class="rp-modal-header">
+        <h3>🎲 Skill Check</h3>
+        <button class="rp-modal-close" onclick="closeModal('skill-check-modal')">✕</button>
+      </div>
+      <div class="rp-modal-body">
+        <div class="form-group">
+          <label>Stat</label>
+          <select id="skill-check-stat" style="width:100%">
+            <option value="">— free roll (no modifier) —</option>
+          </select>
+        </div>
+        <div class="form-group" style="display:flex;gap:12px">
+          <div style="flex:1">
+            <label>Difficulty (DC)</label>
+            <input type="number" id="skill-check-dc" value="15" min="1" max="100" style="width:100%">
+          </div>
+          <div style="flex:1">
+            <label>Dice</label>
+            <input type="text" id="skill-check-dice" value="d20" placeholder="d20, 2d6…" style="width:100%">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Context (optional)</label>
+          <input type="text" id="skill-check-context" placeholder="What are you attempting?" style="width:100%">
+        </div>
+        <div id="skill-check-result" style="display:none;margin-top:12px"></div>
+      </div>
+      <div class="rp-modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('skill-check-modal')">Close</button>
+        <button class="btn btn-primary" onclick="rollSkillCheck()">Roll</button>
       </div>
     </div>
   </div>

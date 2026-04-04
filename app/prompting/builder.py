@@ -44,6 +44,7 @@ from app.core.models import (
     Faction,
     Quest,
     QuestStatus,
+    LocationEntry,
 )
 from app.core.config import Config
 
@@ -124,6 +125,7 @@ def build_messages(
     narrative_arc: NarrativeArc | None = None,
     factions: list[Faction] | None = None,
     quests: list[Quest] | None = None,
+    location_entry: LocationEntry | None = None,
 ) -> list[dict]:
     """
     Build the full message list for the model.
@@ -162,7 +164,7 @@ def build_messages(
 
     # 7. Scene state (placed last in system — most immediately relevant)
     if scene:
-        system_parts.append(_format_scene(scene, clock))
+        system_parts.append(_format_scene(scene, clock, location_entry))
 
     # 8. Player objectives (active goals only)
     if objectives:
@@ -353,12 +355,17 @@ def _certainty_tag(m: MemoryEntry) -> str:
     return ""
 
 
-def _format_scene(scene: SceneState, clock: WorldClock | None = None) -> str:
+def _format_scene(scene: SceneState, clock: WorldClock | None = None, location_entry: LocationEntry | None = None) -> str:
     chars = ", ".join(scene.active_characters) if scene.active_characters else "None specified"
     lines = [
         "[SCENE]",
         f"Location: {scene.location}",
     ]
+    if location_entry:
+        if location_entry.description:
+            lines.append(f"Location description: {location_entry.description}")
+        if location_entry.atmosphere:
+            lines.append(f"Atmosphere: {location_entry.atmosphere}")
     if clock:
         lines.append(f"Time: {clock.display()}")
     lines.append(f"Present characters: {chars}")
