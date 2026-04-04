@@ -125,6 +125,10 @@ class RoleplayEngine:
         self._cards: dict[str, CharacterCard] = {}
         self._lorebooks: dict[str, Lorebook] = {}
 
+        # Per-session extraction locks — prevent concurrent background threads
+        # from the same session racing to write memories/relationships/scene state.
+        self._extraction_locks: dict[str, threading.Lock] = {}
+
         self._reload_assets()
 
     def _reload_assets(self) -> None:
@@ -266,7 +270,7 @@ class RoleplayEngine:
         )
 
         relationships = self.rel_tracker.get_all(session_id)
-        history = self.sessions.get_last_n_turns(session_id, n=20)
+        history = self.sessions.get_last_n_turns(session_id, n=self.config.history_turns)
         world_state = (
             self.world_state_store.get_all(session_id)
             if self.config.world_state_enabled else []
@@ -1163,6 +1167,12 @@ class RoleplayEngine:
         source_turn_ids: list[str],
         provider,
     ) -> None:
+        # One lock per session — extraction jobs for the same session run
+        # sequentially so they never race on memory/relationship writes.
+        if session_id not in self._extraction_locks:
+            self._extraction_locks[session_id] = threading.Lock()
+        lock = self._extraction_locks[session_id]
+
         jobs = [
             (self._do_memory_extraction,
              (session_id, user_message, assistant_message, scene, source_turn_ids, provider)),
@@ -1173,8 +1183,13 @@ class RoleplayEngine:
             (self._do_npc_extraction,
              (session_id, user_message, assistant_message, scene, provider)),
         ]
-        for fn, args in jobs:
-            threading.Thread(target=fn, args=args, daemon=True).start()
+
+        def _run_serialized():
+            with lock:
+                for fn, args in jobs:
+                    fn(*args)
+
+        threading.Thread(target=_run_serialized, daemon=True).start()
 
     def _do_memory_extraction(
         self,

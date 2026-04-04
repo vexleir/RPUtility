@@ -234,6 +234,10 @@ def _consolidate_group(
         except ValueError:
             importance = ImportanceLevel.MEDIUM
 
+        # Carry forward the average confidence of the source memories so that
+        # uncertainty is not silently inflated to 1.0 by consolidation.
+        avg_confidence = sum(m.confidence for m in group) / len(group)
+
         return MemoryEntry(
             session_id=session_id,
             type=MemoryType.CONSOLIDATION,
@@ -242,7 +246,7 @@ def _consolidate_group(
             entities=[str(e) for e in data.get("entities", [])],
             tags=[str(t) for t in data.get("tags", [])],
             importance=importance,
-            confidence=1.0,
+            confidence=round(avg_confidence, 3),
             certainty=CertaintyLevel.CONFIRMED,
             consolidated_from=[m.id for m in group],
         )

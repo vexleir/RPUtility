@@ -43,25 +43,29 @@ class Config(BaseSettings):
     context_window: int = 8192
 
     # ── Memory settings ────────────────────────────────────────────────────
-    max_retrieved_memories: int = 10
+    max_retrieved_memories: int = 15
     memory_extraction_enabled: bool = True
     # Model used for memory extraction (can be a smaller/faster model)
     extraction_model: str = ""   # empty = use same as main model
+
+    # ── Conversation history window ────────────────────────────────────────
+    # How many recent turns to keep in the prompt. Increase for longer sessions.
+    history_turns: int = 30
 
     # ── Memory retrieval scoring weights ───────────────────────────────────
     retrieval_weight_importance: float = 1.0
     retrieval_weight_entity: float = 2.0
     retrieval_weight_keyword: float = 0.5
-    retrieval_weight_recency: float = 1.0
+    retrieval_weight_recency: float = 0.5   # reduced: recency is a bonus, not a gate
     retrieval_weight_reference: float = 0.5
-    retrieval_recency_half_life_days: float = 30.0
-    retrieval_reference_half_life_days: float = 7.0
+    retrieval_recency_half_life_days: float = 60.0  # longer half-life: old facts still matter
+    retrieval_reference_half_life_days: float = 14.0
 
     # Per-type memory caps (0 = no cap)
-    max_memories_event: int = 5
-    max_memories_world_fact: int = 4
-    max_memories_character_detail: int = 3
-    max_memories_relationship_change: int = 3
+    max_memories_event: int = 6
+    max_memories_world_fact: int = 5
+    max_memories_character_detail: int = 5
+    max_memories_relationship_change: int = 4
     max_memories_world_state: int = 4
     max_memories_rumor: int = 2
     max_memories_suspicion: int = 2
@@ -69,8 +73,8 @@ class Config(BaseSettings):
     # ── Memory consolidation ───────────────────────────────────────────────
     consolidation_enabled: bool = True
     # Trigger when this many memories of same type exist (0 = disabled)
-    consolidation_threshold: int = 10
-    consolidation_min_age_days: float = 1.0   # don't consolidate very fresh memories
+    consolidation_threshold: int = 15
+    consolidation_min_age_days: float = 7.0   # don't consolidate developing story arcs
 
     # ── Contradiction detection ────────────────────────────────────────────
     contradiction_detection_enabled: bool = True

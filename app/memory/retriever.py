@@ -49,16 +49,16 @@ _CERTAINTY_MULT = {
     CertaintyLevel.MYTH: 0.6,
 }
 
-# Per-type default caps (0 = no cap)
+# Per-type default caps (0 = no cap) — overridden from Config at call time
 _DEFAULT_TYPE_CAPS: dict[str, int] = {
-    "event": 5,
-    "world_fact": 4,
-    "character_detail": 3,
-    "relationship_change": 3,
+    "event": 6,
+    "world_fact": 5,
+    "character_detail": 5,
+    "relationship_change": 4,
     "world_state": 4,
     "rumor": 2,
     "suspicion": 2,
-    "consolidation": 3,
+    "consolidation": 4,
 }
 
 
@@ -135,18 +135,10 @@ def retrieve(
     type_counts: dict[str, int] = {}
     result: list[MemoryEntry] = []
 
-    # Critical first — include if they share an entity with the current scene,
-    # OR if they have no entities at all (world-level facts with no specific character).
-    scene_entities_lower = (
-        {e.lower() for e in scene.active_characters} | {scene.location.lower()}
-        if scene else set()
-    )
+    # Critical memories are always included — they represent facts that must
+    # never be forgotten regardless of who is currently in the scene.
+    # (Character-defining facts, key world truths, permanent story outcomes.)
     for m in critical:
-        mem_entities_lower = {e.lower() for e in m.entities}
-        if mem_entities_lower and scene_entities_lower:
-            # Has entities — only include if at least one overlaps the scene
-            if not (mem_entities_lower & scene_entities_lower):
-                continue
         t = m.type.value
         cap = caps.get(t, 0)
         count = type_counts.get(t, 0)
