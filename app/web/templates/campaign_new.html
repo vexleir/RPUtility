@@ -42,6 +42,7 @@
       <div class="tab-bar" style="margin-bottom:16px">
         <button type="button" class="tab-btn active" onclick="switchCreateMode('describe')">✍ Describe World</button>
         <button type="button" class="tab-btn" onclick="switchCreateMode('cards')">📂 Import Cards</button>
+        <button type="button" class="tab-btn" onclick="switchCreateMode('empty')">☐ Empty Campaign</button>
       </div>
 
       <!-- Mode: Describe -->
@@ -93,6 +94,20 @@
         <div style="display:flex;gap:12px;margin-top:8px">
           <button class="btn btn-primary" onclick="generateFromCards()" style="flex:1;justify-content:center">
             ✨ Synthesise World from Cards
+          </button>
+          <a href="/" class="btn" style="text-decoration:none">Cancel</a>
+        </div>
+      </div>
+
+      <!-- Mode: Empty Campaign -->
+      <div id="mode-empty" class="hidden">
+        <p class="muted" style="margin-bottom:12px">
+          Create a blank campaign with no pre-filled world details. You can manually add all facts,
+          NPCs, places, factions, and narrative threads from the campaign overview.
+        </p>
+        <div style="display:flex;gap:12px;margin-top:8px">
+          <button class="btn btn-primary" onclick="createEmptyCampaign()" style="flex:1;justify-content:center">
+            ☐ Create Empty Campaign
           </button>
           <a href="/" class="btn" style="text-decoration:none">Cancel</a>
         </div>

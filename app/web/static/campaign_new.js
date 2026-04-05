@@ -66,8 +66,10 @@ async function checkStatus() {
 function switchCreateMode(mode) {
   document.getElementById("mode-describe").classList.toggle("hidden", mode !== "describe");
   document.getElementById("mode-cards").classList.toggle("hidden", mode !== "cards");
-  document.querySelectorAll("#step-describe .tab-btn").forEach((btn, i) => {
-    btn.classList.toggle("active", (i === 0) === (mode === "describe"));
+  document.getElementById("mode-empty").classList.toggle("hidden", mode !== "empty");
+  document.querySelectorAll("#step-describe .tab-btn").forEach(btn => {
+    const btnMode = btn.getAttribute("onclick").match(/'(\w+)'/)?.[1];
+    btn.classList.toggle("active", btnMode === mode);
   });
 }
 
@@ -866,6 +868,52 @@ async function confirmWorld() {
       await _patchNpcPortraits(data.campaign_id, cardsWithPortraits);
     }
 
+    hideLoading();
+    window.location.href = `/campaigns/${data.campaign_id}`;
+  } catch (e) {
+    hideLoading();
+    showBanner(`Could not create campaign: ${e.message}`, "error");
+  }
+}
+
+async function createEmptyCampaign() {
+  const campaignName = document.getElementById("campaign-name-input").value.trim();
+  if (!campaignName) {
+    showBanner("Please enter a campaign name.", "warning");
+    document.getElementById("campaign-name-input").focus();
+    return;
+  }
+
+  const modelName = document.getElementById("model-select").value;
+  showLoading("Creating campaign…", "");
+
+  const emptyWorld = {
+    premise: "",
+    world_facts: [],
+    magic_system: "",
+    factions: [],
+    player_character: { name: "The Protagonist", appearance: "", personality: "", background: "", wants: "", fears: "" },
+    places: [],
+    npcs: [],
+    narrative_threads: [],
+  };
+
+  try {
+    const res = await fetch("/api/campaigns/world-builder/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        world: emptyWorld,
+        campaign_name: campaignName,
+        model_name: modelName || null,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Unknown error" }));
+      const detail = typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail);
+      throw new Error(detail || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
     hideLoading();
     window.location.href = `/campaigns/${data.campaign_id}`;
   } catch (e) {
