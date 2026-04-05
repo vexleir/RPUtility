@@ -38,6 +38,10 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 app = FastAPI(title="RP Utility", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+# Campaign system routes
+from app.web.campaign_routes import router as campaign_router  # noqa: E402
+app.include_router(campaign_router)
+
 # Single engine instance shared across requests
 _engine: Optional[RoleplayEngine] = None
 
@@ -355,6 +359,26 @@ def recap_page(session_id: str):
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     return HTMLResponse(read_template("recap.html", SESSION_ID=session.id))
+
+
+# ── Campaign HTML pages ───────────────────────────────────────────────────────
+
+@app.get("/campaigns/new", response_class=HTMLResponse)
+def campaign_new_page():
+    """World builder / new campaign creation page."""
+    return HTMLResponse(read_template("campaign_new.html"))
+
+
+@app.get("/campaigns/{campaign_id}", response_class=HTMLResponse)
+def campaign_overview_page(campaign_id: str):
+    """Campaign overview: world document, NPCs, threads, scene history."""
+    return HTMLResponse(read_template("campaign_overview.html", CAMPAIGN_ID=campaign_id))
+
+
+@app.get("/campaigns/{campaign_id}/play", response_class=HTMLResponse)
+def campaign_play_page(campaign_id: str):
+    """Scene play interface for a campaign."""
+    return HTMLResponse(read_template("campaign_play.html", CAMPAIGN_ID=campaign_id))
 
 
 @app.get("/api/session/{session_id}/recap/full")

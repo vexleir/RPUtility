@@ -1,0 +1,984 @@
+/**
+ * Campaign scene play interface.
+ * Manages scene setup, AI streaming chat, and scene confirmation.
+ */
+
+"use strict";
+
+// ── State ─────────────────────────────────────────────────────────────────────
+
+let _campaign = null;
+let _scene = null;       // active scene or null
+let _pc = null;
+let _npcs = [];
+let _threads = [];
+let _facts = [];
+let _streaming = false;
+let _userName = "Player";
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+document.addEventListener("DOMContentLoaded", () => {
+  loadWorld();
+  setupInput();
+});
+
+async function loadWorld() {
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/world`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    _campaign = data.campaign;
+    _pc = data.player_character;
+    _npcs = data.npcs || [];
+    _threads = (data.threads || []).filter(t => t.status === "active");
+    _facts = (data.world_facts || []).filter(f => f.content);
+    _scene = data.scenes?.find(s => !s.confirmed) || null;
+
+    document.getElementById("back-link").href = `/campaigns/${CAMPAIGN_ID}`;
+    document.getElementById("cancel-setup-link").href = `/campaigns/${CAMPAIGN_ID}`;
+    document.getElementById("campaign-name-badge").textContent = _campaign?.name || "";
+
+    // Populate setup datalist with known locations
+    const dl = document.getElementById("location-suggestions");
+    (data.places || []).forEach(p => {
+      const opt = document.createElement("option");
+      opt.value = p.name;
+      dl.appendChild(opt);
+    });
+
+    // Populate NPC checkboxes
+    renderNpcCheckboxes();
+
+    const forceNew = new URLSearchParams(window.location.search).get("new") === "1";
+
+    if (_scene && !forceNew) {
+      // Resume existing active scene
+      showChatMode();
+      renderExistingTurns();
+      renderSidebar();
+    } else {
+      // Show setup panel for new scene
+      _scene = null;
+      document.getElementById("scene-setup-panel").classList.remove("hidden");
+    }
+
+    // Load player scratchpad
+    loadScratchpad();
+  } catch (e) {
+    showError(`Failed to load campaign: ${e.message}`);
+  }
+}
+
+function renderNpcCheckboxes() {
+  const container = document.getElementById("npc-checkboxes");
+  container.innerHTML = "";
+  if (!_npcs.length) {
+    container.innerHTML = '<span class="muted">No NPCs yet — add them on the campaign overview page.</span>';
+    return;
+  }
+  _npcs.filter(n => n.is_alive).forEach(n => {
+    const label = document.createElement("label");
+    label.className = "npc-checkbox-label";
+    label.innerHTML = `<input type="checkbox" value="${n.id}"> ${escHtml(n.name)}${n.role ? ` <span class="muted">(${escHtml(n.role)})</span>` : ""}`;
+    container.appendChild(label);
+  });
+}
+
+// ── Scene setup ───────────────────────────────────────────────────────────────
+
+async function beginScene() {
+  const title = document.getElementById("setup-title").value.trim();
+  const location = document.getElementById("setup-location").value.trim();
+  const intent = document.getElementById("setup-intent").value.trim();
+  const tone = document.getElementById("setup-tone").value.trim();
+  const npcIds = [...document.querySelectorAll("#npc-checkboxes input:checked")].map(c => c.value);
+  const allowUnselectedNpcs = document.getElementById("setup-allow-unselected-npcs").checked;
+
+  // Feature 3: conflict detection — warn about dead NPCs
+  const deadNames = npcIds
+    .map(id => _npcs.find(n => n.id === id))
+    .filter(n => n && !n.is_alive)
+    .map(n => n.name);
+  if (deadNames.length) {
+    const ok = confirm(
+      `Warning: the following NPCs are marked as deceased in the world document:\n\n${deadNames.join(", ")}\n\nAdd them to this scene anyway?`
+    );
+    if (!ok) return;
+  }
+
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, location, npc_ids: npcIds, intent, tone, allow_unselected_npcs: allowUnselectedNpcs }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    _scene = await res.json();
+    showChatMode();
+    renderSidebar();
+    await streamOpeningNarration();
+  } catch (e) {
+    showError(`Could not start scene: ${e.message}`);
+  }
+}
+
+async function streamOpeningNarration() {
+  _streaming = true;
+  setSendEnabled(false);
+  const aiDiv = appendStreamingMessage();
+  let buffer = "";
+
+  try {
+    const temperature = parseFloat(document.getElementById("gs-temperature").value) || 0.8;
+    const maxTokens = parseInt(document.getElementById("gs-max-tokens").value) || 1024;
+
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${_scene.id}/open`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ temperature, max_tokens: maxTokens }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Unknown error" }));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      aiDiv.innerHTML = marked.parse(buffer);
+      scrollToBottom();
+    }
+
+    finalizeStreamingMessage(aiDiv, buffer);
+    if (!_scene.turns) _scene.turns = [];
+    _scene.turns.push({ role: "assistant", content: buffer });
+
+  } catch (e) {
+    aiDiv.innerHTML = `<span class="error-text">Error: ${escHtml(e.message)}</span>`;
+    showError(e.message);
+  } finally {
+    _streaming = false;
+    setSendEnabled(true);
+    updateUndoButton();
+    scrollToBottom();
+    document.getElementById("user-input").focus();
+  }
+}
+
+function showChatMode() {
+  document.getElementById("scene-setup-panel").classList.add("hidden");
+  document.getElementById("chat-body").style.display = "";
+  document.getElementById("end-scene-btn").style.display = "";
+
+  // Update header
+  const title = _scene?.title || `Scene ${_scene?.scene_number ?? ""}`;
+  document.getElementById("scene-title").textContent = title;
+  document.title = `${title} — RP Utility`;
+  if (_scene?.location)
+    document.getElementById("scene-location-badge").textContent = `📍 ${_scene.location}`;
+  if (_scene?.scene_number)
+    document.getElementById("scene-num-badge").textContent = `Scene ${_scene.scene_number}`;
+
+  // Tone badge
+  const toneBadge = document.getElementById("scene-tone-badge");
+  if (_scene?.tone) {
+    toneBadge.textContent = _scene.tone;
+    toneBadge.classList.remove("hidden");
+  } else {
+    toneBadge.classList.add("hidden");
+  }
+
+  updateUndoButton();
+  document.getElementById("user-input").focus();
+}
+
+function updateUndoButton() {
+  const btn = document.getElementById("undo-btn");
+  if (!btn) return;
+  const hasTurns = (_scene?.turns?.length || 0) > 0;
+  btn.style.display = (hasTurns && !_scene?.confirmed) ? "" : "none";
+}
+
+// ── Render existing scene turns ───────────────────────────────────────────────
+
+function renderExistingTurns() {
+  if (!_scene?.turns?.length) return;
+  const area = document.getElementById("messages-area");
+  area.innerHTML = "";
+  _scene.turns.forEach(t => {
+    appendMessage(t.role, t.content);
+  });
+  scrollToBottom();
+  updateUndoButton();
+}
+
+// ── Chat ──────────────────────────────────────────────────────────────────────
+
+async function sendMessage() {
+  if (_streaming) return;
+  const input = document.getElementById("user-input");
+  let text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  input.style.height = "";
+
+  // ── Dice roll command (/roll XdY or /roll XdY+Z) ─────────────────────────
+  const diceMatch = text.match(/^\/roll\s+(\d*)d(\d+)([+-]\d+)?(.*)$/i);
+  if (diceMatch) {
+    const count  = parseInt(diceMatch[1] || "1");
+    const sides  = parseInt(diceMatch[2]);
+    const mod    = parseInt(diceMatch[3] || "0");
+    const extra  = (diceMatch[4] || "").trim();
+    if (count >= 1 && count <= 100 && sides >= 2 && sides <= 1000) {
+      const rolls  = Array.from({ length: count }, () => Math.ceil(Math.random() * sides));
+      const total  = rolls.reduce((a, b) => a + b, 0) + mod;
+      const modStr = mod > 0 ? `+${mod}` : mod < 0 ? `${mod}` : "";
+      const label  = `${count}d${sides}${modStr}`;
+      const rollStr = rolls.length > 1 ? `[${rolls.join(", ")}]` : `${rolls[0]}`;
+      const resultLine = `🎲 Roll ${label}: ${rollStr}${mod !== 0 ? ` ${mod > 0 ? "+" : ""}${mod}` : ""} = **${total}**`;
+      appendDiceRoll(label, rolls, mod, total);
+      // Build the message sent to AI — include roll result as context
+      text = extra
+        ? `${extra}\n\n*(${resultLine})*`
+        : `*(${resultLine})*`;
+    }
+  }
+
+  appendMessage("user", text);
+  scrollToBottom();
+  _streaming = true;
+  setSendEnabled(false);
+
+  const aiDiv = appendStreamingMessage();
+  let buffer = "";
+
+  try {
+    const temperature = parseFloat(document.getElementById("gs-temperature").value) || 0.8;
+    const maxTokens = parseInt(document.getElementById("gs-max-tokens").value) || 1024;
+
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${_scene.id}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: text,
+        user_name: _userName,
+        temperature,
+        max_tokens: maxTokens,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Unknown error" }));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      aiDiv.innerHTML = marked.parse(buffer);
+      scrollToBottom();
+    }
+
+    // Finalize
+    finalizeStreamingMessage(aiDiv, buffer);
+
+    // Update local scene turns
+    if (!_scene.turns) _scene.turns = [];
+    _scene.turns.push({ role: "user", content: text });
+    _scene.turns.push({ role: "assistant", content: buffer });
+
+  } catch (e) {
+    aiDiv.innerHTML = `<span class="error-text">Error: ${escHtml(e.message)}</span>`;
+    showError(e.message);
+  } finally {
+    _streaming = false;
+    setSendEnabled(true);
+    updateUndoButton();
+    scrollToBottom();
+  }
+}
+
+// ── Message rendering ─────────────────────────────────────────────────────────
+
+function appendMessage(role, content) {
+  const area = document.getElementById("messages-area");
+  const div = document.createElement("div");
+  div.className = `message-bubble ${role === "user" ? "user-bubble" : "ai-bubble"}`;
+  div.style.animation = "fadeIn 0.2s ease";
+
+  if (role === "assistant") {
+    div.innerHTML = marked.parse(content);
+  } else {
+    // Use textContent first to safely escape HTML, then colorize in-place
+    div.textContent = content;
+    // Re-set as a single text node so the walker can process it
+  }
+  colorizeAiProse(div);
+  area.appendChild(div);
+  return div;
+}
+
+function appendStreamingMessage() {
+  const area = document.getElementById("messages-area");
+  const div = document.createElement("div");
+  div.className = "message-bubble ai-bubble streaming";
+  div.style.animation = "fadeIn 0.2s ease";
+  div.innerHTML = '<span class="typing-dot"></span>';
+  area.appendChild(div);
+  return div;
+}
+
+function finalizeStreamingMessage(div, content) {
+  div.classList.remove("streaming");
+  div.innerHTML = marked.parse(content);
+  colorizeAiProse(div);
+}
+
+/**
+ * Walk all text nodes inside an AI bubble and wrap:
+ *   "quoted speech"   → <span class="prose-dialogue">
+ *   *emote text*      → <span class="prose-emote">  (if not already inside an <em>)
+ * Normal narration stays unstyled (white).
+ */
+function colorizeAiProse(container) {
+  // Process every text-bearing leaf node (skip <code>, <pre>)
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const tag = node.parentElement?.tagName?.toUpperCase();
+      if (["CODE", "PRE", "SCRIPT", "STYLE"].includes(tag)) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    }
+  });
+
+  const nodes = [];
+  let n;
+  while ((n = walker.nextNode())) nodes.push(n);
+
+  nodes.forEach(textNode => {
+    const raw = textNode.nodeValue;
+    // Only process nodes that contain a quote or asterisk
+    if (!raw.includes('"') && !raw.includes("*") && !raw.includes("\u2018") && !raw.includes("\u201C")) return;
+
+    // Build a fragment replacing matches with coloured spans
+    // Pattern: "quoted" → dialogue, *emote* → emote (avoid double-wrapping <em>)
+    const frag = document.createDocumentFragment();
+    // Combined regex: "..." or *...*
+    const re = /("(?:[^"\\]|\\.)*"|\u201C[^\u201D]*\u201D|\*[^*\n]+\*)/g;
+    let last = 0, m;
+    while ((m = re.exec(raw)) !== null) {
+      if (m.index > last) frag.appendChild(document.createTextNode(raw.slice(last, m.index)));
+      const span = document.createElement("span");
+      const isEmote = m[0].startsWith("*");
+      span.className = isEmote ? "prose-emote" : "prose-dialogue";
+      // Strip the surrounding * for emote (marked already handles <em> in block elements;
+      // this handles inline *text* that wasn't wrapped)
+      span.textContent = isEmote ? m[0].slice(1, -1) : m[0];
+      frag.appendChild(span);
+      last = m.index + m[0].length;
+    }
+    if (last < raw.length) frag.appendChild(document.createTextNode(raw.slice(last)));
+    if (last > 0) textNode.replaceWith(frag);
+  });
+}
+
+// ── End scene ─────────────────────────────────────────────────────────────────
+
+function openEndScene() {
+  document.getElementById("scene-summary-input").value = _scene?.proposed_summary || "";
+  openModal("end-scene-modal");
+}
+
+async function suggestSummary() {
+  document.getElementById("suggest-loading").style.display = "";
+  document.querySelector("#end-scene-suggest-row .btn").disabled = true;
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${_scene.id}/suggest-summary`, {
+      method: "POST",
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (data.summary) document.getElementById("scene-summary-input").value = data.summary;
+  } catch (e) {
+    showError(`Could not generate summary: ${e.message}`);
+  } finally {
+    document.getElementById("suggest-loading").style.display = "none";
+    document.querySelector("#end-scene-suggest-row .btn").disabled = false;
+  }
+}
+
+async function confirmEndScene() {
+  const summary = document.getElementById("scene-summary-input").value.trim();
+  if (!summary) {
+    alert("Please write a summary before confirming.");
+    return;
+  }
+  const confirmBtn = document.querySelector("#end-scene-modal .btn-primary");
+  confirmBtn.disabled = true;
+  confirmBtn.textContent = "Saving…";
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${_scene.id}/confirm`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ proposed_summary: summary }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    closeModal("end-scene-modal");
+    await loadWorldUpdateSuggestions();
+  } catch (e) {
+    showError(`Could not confirm scene: ${e.message}`);
+    confirmBtn.disabled = false;
+    confirmBtn.textContent = "✓ Confirm & Close Scene";
+  }
+}
+
+// ── World update suggestions (Feature 2) ──────────────────────────────────────
+
+let _pendingSuggestions = null;
+
+async function loadWorldUpdateSuggestions() {
+  const footer = document.getElementById("world-updates-footer");
+  const body = document.getElementById("world-updates-body");
+  openModal("world-updates-modal");
+  body.querySelector("p").textContent = "Analysing story impact…";
+  document.getElementById("wu-npc-section").classList.add("hidden");
+  document.getElementById("wu-facts-section").classList.add("hidden");
+  document.getElementById("wu-threads-section").classList.add("hidden");
+  document.getElementById("wu-none-msg").classList.add("hidden");
+  footer.style.display = "none";
+
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${_scene.id}/suggest-updates`, {
+      method: "POST",
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    _pendingSuggestions = await res.json();
+  } catch (e) {
+    body.querySelector("p").textContent = `Could not generate suggestions: ${e.message}`;
+    footer.style.display = "";
+    document.getElementById("wu-none-msg").classList.remove("hidden");
+    _pendingSuggestions = null;
+    return;
+  }
+
+  body.querySelector("p").textContent =
+    "Based on what happened in this scene, the following world document updates are suggested. Uncheck any you want to skip, then click Apply.";
+  footer.style.display = "";
+
+  const { npc_updates = [], new_facts = [], thread_updates = [] } = _pendingSuggestions;
+  const hasAny = npc_updates.length || new_facts.length || thread_updates.length;
+
+  if (!hasAny) {
+    document.getElementById("wu-none-msg").classList.remove("hidden");
+    return;
+  }
+
+  if (npc_updates.length) {
+    document.getElementById("wu-npc-section").classList.remove("hidden");
+    document.getElementById("wu-npc-list").innerHTML = npc_updates.map((u, i) => `
+      <label class="wu-item">
+        <input type="checkbox" class="wu-npc-cb" data-index="${i}" checked>
+        <div class="wu-item-text">
+          <strong>${escHtml(u.npc_name)}</strong> —
+          <span class="muted">${escHtml(u.field)}</span>:
+          <span class="wu-old">${escHtml(String(u.current_value))}</span> →
+          <span class="wu-new">${escHtml(String(u.suggested_value))}</span>
+          <div class="wu-reason muted">${escHtml(u.reason)}</div>
+        </div>
+      </label>`).join("");
+  }
+
+  if (new_facts.length) {
+    document.getElementById("wu-facts-section").classList.remove("hidden");
+    document.getElementById("wu-facts-list").innerHTML = new_facts.map((f, i) => `
+      <label class="wu-item">
+        <input type="checkbox" class="wu-fact-cb" data-index="${i}" checked>
+        <div class="wu-item-text">
+          ${escHtml(f.content)}
+          <div class="wu-reason muted">${escHtml(f.reason)}</div>
+        </div>
+      </label>`).join("");
+  }
+
+  if (thread_updates.length) {
+    document.getElementById("wu-threads-section").classList.remove("hidden");
+    document.getElementById("wu-threads-list").innerHTML = thread_updates.map((t, i) => `
+      <label class="wu-item">
+        <input type="checkbox" class="wu-thread-cb" data-index="${i}" checked>
+        <div class="wu-item-text">
+          <strong>${escHtml(t.thread_title)}</strong> → mark as
+          <span class="wu-new">${escHtml(t.new_status)}</span>
+          <div class="wu-reason muted">${escHtml(t.reason)}</div>
+        </div>
+      </label>`).join("");
+  }
+}
+
+async function applyWorldUpdates() {
+  if (!_pendingSuggestions) { skipWorldUpdates(); return; }
+  const applyBtn = document.querySelector("#world-updates-modal .btn-primary");
+  applyBtn.disabled = true;
+  applyBtn.textContent = "Applying…";
+
+  const { npc_updates = [], new_facts = [], thread_updates = [] } = _pendingSuggestions;
+
+  // Apply checked NPC updates
+  const checkedNpcs = [...document.querySelectorAll(".wu-npc-cb:checked")].map(cb => npc_updates[+cb.dataset.index]);
+  for (const u of checkedNpcs) {
+    const npc = _npcs.find(n => n.id === u.npc_id);
+    if (!npc) continue;
+    const updated = { ...npc, [u.field]: u.suggested_value };
+    await fetch(`/api/campaigns/${CAMPAIGN_ID}/npcs`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updated),
+    }).catch(() => {});
+  }
+
+  // Apply checked new facts — append to existing facts
+  const checkedFacts = [...document.querySelectorAll(".wu-fact-cb:checked")].map(cb => new_facts[+cb.dataset.index]);
+  if (checkedFacts.length) {
+    const existingContents = _facts.map(f => f.content);
+    const allFacts = [...existingContents, ...checkedFacts.map(f => f.content)];
+    await fetch(`/api/campaigns/${CAMPAIGN_ID}/world-facts`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ facts: allFacts }),
+    }).catch(() => {});
+  }
+
+  // Apply checked thread status updates
+  const checkedThreads = [...document.querySelectorAll(".wu-thread-cb:checked")].map(cb => thread_updates[+cb.dataset.index]);
+  for (const u of checkedThreads) {
+    const thread = _threads.find(t => t.id === u.thread_id)
+      || (await fetch(`/api/campaigns/${CAMPAIGN_ID}/threads`).then(r => r.json()).catch(() => []))
+          .find(t => t.id === u.thread_id);
+    if (!thread) continue;
+    await fetch(`/api/campaigns/${CAMPAIGN_ID}/threads`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...thread, status: u.new_status }),
+    }).catch(() => {});
+  }
+
+  skipWorldUpdates();
+}
+
+function skipWorldUpdates() {
+  closeModal("world-updates-modal");
+  window.location.href = `/campaigns/${CAMPAIGN_ID}`;
+}
+
+// ── Sidebar rendering ─────────────────────────────────────────────────────────
+
+function renderSidebar() {
+  // NPCs in scene
+  const npcContainer = document.getElementById("sidebar-npcs");
+  const sceneNpcIds = new Set(_scene?.npc_ids || []);
+  const sceneNpcs = _npcs.filter(n => sceneNpcIds.has(n.id));
+  if (sceneNpcs.length) {
+    npcContainer.innerHTML = sceneNpcs.map(n => `
+      <div class="sidebar-item">
+        <div class="sidebar-item-name">${escHtml(n.name)}</div>
+        ${n.role ? `<div class="sidebar-item-sub muted">${escHtml(n.role)}</div>` : ""}
+        ${n.current_state ? `<div class="sidebar-item-sub">${escHtml(n.current_state)}</div>` : ""}
+      </div>
+    `).join("");
+  } else {
+    npcContainer.innerHTML = '<div class="muted" style="font-size:0.8rem">No NPCs in this scene.</div>';
+  }
+
+  // Threads
+  const threadContainer = document.getElementById("sidebar-threads");
+  if (_threads.length) {
+    threadContainer.innerHTML = _threads.map(t => `
+      <div class="sidebar-item">
+        <div class="sidebar-item-name">${escHtml(t.title)}</div>
+        ${t.description ? `<div class="sidebar-item-sub muted">${escHtml(t.description.substring(0, 80))}${t.description.length > 80 ? "…" : ""}</div>` : ""}
+      </div>
+    `).join("");
+  } else {
+    threadContainer.innerHTML = '<div class="muted" style="font-size:0.8rem">No active threads.</div>';
+  }
+
+  // World facts (first 5)
+  const factsContainer = document.getElementById("sidebar-facts");
+  const displayFacts = _facts.slice(0, 5);
+  if (displayFacts.length) {
+    factsContainer.innerHTML = displayFacts.map(f => `
+      <div class="sidebar-item sidebar-fact">• ${escHtml(f.content.substring(0, 100))}${f.content.length > 100 ? "…" : ""}</div>
+    `).join("");
+  } else {
+    factsContainer.innerHTML = '<div class="muted" style="font-size:0.8rem">No world facts.</div>';
+  }
+
+  // Scene context modal
+  buildContextModal();
+}
+
+function buildContextModal() {
+  const body = document.getElementById("scene-context-body");
+  const pc = _pc;
+  const sceneNpcIds = new Set(_scene?.npc_ids || []);
+
+  body.innerHTML = `
+    ${pc ? `
+      <div class="world-section">
+        <h4>Player Character</h4>
+        <div><strong>${escHtml(pc.name)}</strong></div>
+        ${pc.personality ? `<div class="muted">${escHtml(pc.personality)}</div>` : ""}
+      </div>` : ""}
+
+    ${_scene?.intent ? `
+      <div class="world-section">
+        <h4>Scene Intent</h4>
+        <div>${escHtml(_scene.intent)}</div>
+      </div>` : ""}
+
+    <div class="world-section">
+      <h4>World Facts</h4>
+      <ul style="margin:0;padding-left:20px">
+        ${_facts.map(f => `<li>${escHtml(f.content)}</li>`).join("")}
+      </ul>
+    </div>
+
+    ${_threads.length ? `
+      <div class="world-section">
+        <h4>Active Narrative Threads</h4>
+        ${_threads.map(t => `
+          <div style="margin-bottom:8px">
+            <strong>${escHtml(t.title)}</strong>
+            ${t.description ? `<div class="muted">${escHtml(t.description)}</div>` : ""}
+          </div>`).join("")}
+      </div>` : ""}
+
+    ${_npcs.filter(n => sceneNpcIds.has(n.id)).length ? `
+      <div class="world-section">
+        <h4>NPCs in Scene</h4>
+        ${_npcs.filter(n => sceneNpcIds.has(n.id)).map(n => `
+          <div style="margin-bottom:8px">
+            <strong>${escHtml(n.name)}</strong>${n.role ? ` — ${escHtml(n.role)}` : ""}
+            ${n.personality ? `<div class="muted">${escHtml(n.personality)}</div>` : ""}
+          </div>`).join("")}
+      </div>` : ""}
+  `;
+}
+
+// ── Dice roll bubble ──────────────────────────────────────────────────────────
+
+function appendDiceRoll(label, rolls, mod, total) {
+  const area = document.getElementById("messages-area");
+  const div = document.createElement("div");
+  div.className = "message-bubble dice-bubble";
+  div.style.animation = "fadeIn 0.2s ease";
+  const modStr = mod > 0 ? ` + ${mod}` : mod < 0 ? ` − ${Math.abs(mod)}` : "";
+  const rollStr = rolls.length > 1 ? rolls.join(" + ") : rolls[0];
+  div.innerHTML = `<span class="dice-label">🎲 ${escHtml(label)}</span><span class="dice-rolls">${rollStr}${modStr}</span><span class="dice-total">${total}</span>`;
+  area.appendChild(div);
+  scrollToBottom();
+}
+
+// ── Scene search ──────────────────────────────────────────────────────────────
+
+function openSceneSearch() {
+  document.getElementById("scene-search-input").value = "";
+  document.getElementById("scene-search-results").innerHTML =
+    '<div class="muted" style="font-size:0.85rem">Type to search within this scene\'s turns.</div>';
+  openModal("scene-search-modal");
+  setTimeout(() => document.getElementById("scene-search-input").focus(), 50);
+}
+
+function runSceneSearch() {
+  const q = document.getElementById("scene-search-input").value.toLowerCase().trim();
+  const container = document.getElementById("scene-search-results");
+  if (q.length < 2) {
+    container.innerHTML = '<div class="muted" style="font-size:0.85rem">Type at least 2 characters.</div>';
+    return;
+  }
+  const turns = _scene?.turns || [];
+  const matches = [];
+  turns.forEach((t, i) => {
+    const pos = t.content.toLowerCase().indexOf(q);
+    if (pos === -1) return;
+    const start = Math.max(0, pos - 60);
+    const end   = Math.min(t.content.length, pos + q.length + 60);
+    matches.push({ turn: t, index: i, pos, start, end, excerpt: t.content.slice(start, end) });
+  });
+
+  if (!matches.length) {
+    container.innerHTML = '<div class="muted" style="font-size:0.85rem">No matches in this scene.</div>';
+    return;
+  }
+  container.innerHTML = "";
+  matches.forEach(m => {
+    const div = document.createElement("div");
+    div.className = "search-result";
+    const role = m.turn.role === "user" ? "Player" : "Narrator";
+    const localPos = m.pos - m.start;
+    const before = escHtml(m.excerpt.slice(0, localPos));
+    const match  = escHtml(m.excerpt.slice(localPos, localPos + q.length));
+    const after  = escHtml(m.excerpt.slice(localPos + q.length));
+    div.innerHTML = `
+      <div class="search-result-meta"><span class="muted">${role} · Turn ${m.index + 1}</span></div>
+      <div class="search-result-excerpt">${before}<mark class="search-highlight">${match}</mark>${after}</div>
+    `;
+    container.appendChild(div);
+  });
+}
+
+// ── Undo last turn ────────────────────────────────────────────────────────────
+
+async function undoLastTurn() {
+  if (_streaming || !_scene) return;
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${_scene.id}/turns/last`, {
+      method: "DELETE",
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    _scene = await res.json();
+    // Re-render the messages area from the updated turn list
+    const area = document.getElementById("messages-area");
+    area.innerHTML = "";
+    renderExistingTurns();
+    updateUndoButton();
+    showToast("Last exchange removed.", "info");
+  } catch (e) {
+    showError(`Undo failed: ${e.message}`);
+  }
+}
+
+// ── Prompt preview ────────────────────────────────────────────────────────────
+
+async function openPromptPreview() {
+  if (!_scene) {
+    showToast("No active scene to preview.", "info");
+    return;
+  }
+  document.getElementById("prompt-preview-loading").style.display = "";
+  document.getElementById("prompt-preview-text").style.display = "none";
+  document.getElementById("prompt-preview-stats").textContent = "";
+  openModal("prompt-preview-modal");
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${_scene.id}/prompt-preview`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    document.getElementById("prompt-preview-text").textContent = data.system_prompt;
+    document.getElementById("prompt-preview-text").style.display = "";
+    const chars = data.system_prompt.length;
+    document.getElementById("prompt-preview-stats").textContent =
+      `${chars.toLocaleString()} chars · ${data.total_messages - 2} history turns`;
+  } catch (e) {
+    document.getElementById("prompt-preview-loading").textContent = `Error: ${e.message}`;
+  } finally {
+    document.getElementById("prompt-preview-loading").style.display = "none";
+  }
+}
+
+// ── Toast notifications ───────────────────────────────────────────────────────
+
+function showToast(msg, type = "info", duration = 4000) {
+  const container = document.getElementById("toast-container");
+  if (!container) return;
+  const toast = document.createElement("div");
+  toast.className = `toast toast-${type}`;
+  toast.textContent = msg;
+  container.appendChild(toast);
+  // Trigger fade-in
+  requestAnimationFrame(() => toast.classList.add("toast-visible"));
+  setTimeout(() => {
+    toast.classList.remove("toast-visible");
+    toast.addEventListener("transitionend", () => toast.remove(), { once: true });
+  }, duration);
+}
+
+// ── Input helpers ─────────────────────────────────────────────────────────────
+
+function setupInput() {
+  const input = document.getElementById("user-input");
+  if (!input) return;
+  input.addEventListener("keydown", e => {
+    // Enter (without Shift) sends; Ctrl/Cmd+Enter also sends
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+  input.addEventListener("input", () => {
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight, 200) + "px";
+  });
+
+  // Global keyboard shortcuts
+  document.addEventListener("keydown", e => {
+    // Esc → close topmost visible modal
+    if (e.key === "Escape") {
+      const modals = [...document.querySelectorAll(".modal-backdrop:not(.hidden)")];
+      if (modals.length) {
+        e.preventDefault();
+        modals[modals.length - 1].classList.add("hidden");
+      }
+    }
+    // / → focus chat input (when not already in a text field and chat is visible)
+    if (e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const tag = document.activeElement?.tagName;
+      if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") {
+        const chatBody = document.getElementById("chat-body");
+        if (chatBody && chatBody.style.display !== "none") {
+          e.preventDefault();
+          input.focus();
+        }
+      }
+    }
+  });
+}
+
+function setSendEnabled(enabled) {
+  document.getElementById("send-btn").disabled = !enabled;
+}
+
+function scrollToBottom() {
+  const area = document.getElementById("messages-area");
+  area.scrollTop = area.scrollHeight;
+}
+
+function showError(msg) {
+  const el = document.getElementById("error-banner");
+  el.textContent = msg;
+  el.style.display = "";
+  setTimeout(() => { el.style.display = "none"; }, 8000);
+}
+
+// ── Modals ────────────────────────────────────────────────────────────────────
+
+function openModal(id) {
+  document.getElementById(id).classList.remove("hidden");
+}
+
+function closeModal(id) {
+  document.getElementById(id).classList.add("hidden");
+}
+
+// ── Quick-add NPC ─────────────────────────────────────────────────────────────
+
+function openQuickAddNpc() {
+  document.getElementById("qnpc-name").value = "";
+  document.getElementById("qnpc-role").value = "";
+  document.getElementById("qnpc-personality").value = "";
+  document.getElementById("qnpc-state").value = "";
+  document.getElementById("qnpc-add-to-scene").checked = true;
+  openModal("quick-npc-modal");
+  setTimeout(() => document.getElementById("qnpc-name").focus(), 50);
+}
+
+async function saveQuickNpc() {
+  const name = document.getElementById("qnpc-name").value.trim();
+  if (!name) {
+    document.getElementById("qnpc-name").focus();
+    return;
+  }
+  const body = {
+    name,
+    role: document.getElementById("qnpc-role").value.trim(),
+    personality: document.getElementById("qnpc-personality").value.trim(),
+    current_state: document.getElementById("qnpc-state").value.trim(),
+    current_location: _scene?.location || "",
+    appearance: "",
+    relationship_to_player: "",
+    is_alive: true,
+  };
+
+  try {
+    // 1. Save NPC to world document
+    const npcRes = await fetch(`/api/campaigns/${CAMPAIGN_ID}/npcs`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!npcRes.ok) throw new Error(`HTTP ${npcRes.status}`);
+    const newNpc = await npcRes.json();
+
+    // Add to local NPC list
+    _npcs = [..._npcs.filter(n => n.id !== newNpc.id), newNpc];
+
+    // 2. Optionally add to current scene's npc_ids
+    const addToScene = document.getElementById("qnpc-add-to-scene").checked;
+    if (addToScene && _scene) {
+      const updatedIds = [...(_scene.npc_ids || []), newNpc.id];
+      const sceneRes = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${_scene.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ npc_ids: updatedIds }),
+      });
+      if (sceneRes.ok) {
+        _scene = await sceneRes.json();
+      }
+    }
+
+    closeModal("quick-npc-modal");
+    renderSidebar();
+  } catch (e) {
+    showError(`Could not save NPC: ${e.message}`);
+  }
+}
+
+// ── Player scratchpad ─────────────────────────────────────────────────────────
+
+let _scratchpadTimer = null;
+
+function loadScratchpad() {
+  const notes = _campaign?.notes || "";
+  const el = document.getElementById("scratchpad");
+  if (!el) return;
+  el.value = notes;
+  el.addEventListener("input", () => {
+    clearTimeout(_scratchpadTimer);
+    document.getElementById("scratchpad-status").textContent = "Unsaved…";
+    _scratchpadTimer = setTimeout(saveScratchpad, 1200);
+  });
+}
+
+async function saveScratchpad() {
+  const el = document.getElementById("scratchpad");
+  const statusEl = document.getElementById("scratchpad-status");
+  if (!el) return;
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/notes`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notes: el.value }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (_campaign) _campaign.notes = el.value;
+    statusEl.textContent = "Saved";
+    setTimeout(() => { statusEl.textContent = ""; }, 2000);
+  } catch (e) {
+    statusEl.textContent = "Save failed";
+  }
+}
+
+// ── Utility ───────────────────────────────────────────────────────────────────
+
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}

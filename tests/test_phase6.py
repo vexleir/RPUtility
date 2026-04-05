@@ -24,8 +24,16 @@ from app.prompting.builder import _format_quests
 @pytest.fixture
 def db(tmp_path):
     path = str(tmp_path / "test.db")
-    from app.core.database import ensure_db
+    from app.core.database import ensure_db, get_connection
     ensure_db(path)
+    # Insert a stub session row so FK constraints on session_id are satisfied
+    with get_connection(path) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO sessions (id, name, character_name, created_at, last_active)"
+            " VALUES (?, 'Test', 'Test', datetime('now'), datetime('now'))",
+            (SESSION,),
+        )
+        conn.commit()
     return path
 
 

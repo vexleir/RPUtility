@@ -11,6 +11,7 @@ let models = [];
 // ── Boot ──────────────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", async () => {
   await Promise.all([
+    loadCampaigns(),
     loadSessions(),
     loadCards(),
     loadLorebooks(),
@@ -41,6 +42,123 @@ async function checkProvider() {
     }
   } catch {
     showBanner("error", "Could not reach the RP Utility server.");
+  }
+}
+
+// ── Campaigns ─────────────────────────────────────────────────────────────────
+async function loadCampaigns() {
+  const list = document.getElementById("campaign-list");
+  if (!list) return;
+  try {
+    const res = await fetch("/api/campaigns");
+    const campaigns = await res.json();
+    if (!campaigns.length) {
+      list.innerHTML = `
+        <div class="empty-state">
+          <div style="font-size:40px">🌍</div>
+          <p>No campaigns yet.<br>Create one above →</p>
+        </div>`;
+      return;
+    }
+    list.innerHTML = campaigns.map(c => campaignCard(c)).join("");
+  } catch {
+    list.innerHTML = `<div class="banner banner-error">Failed to load campaigns.</div>`;
+  }
+}
+
+function campaignCard(c) {
+  const model = c.model_name || "default";
+  const age = timeAgo(c.updated_at);
+  return `
+    <div class="session-card" id="campaign-${c.id}" data-campaign-name="${esc(c.name)}">
+      <div class="session-avatar" style="background:var(--accent-dim);color:var(--accent)">🌍</div>
+      <div class="session-info">
+        <div class="session-name">${esc(c.name)}</div>
+        <div class="session-meta">
+          <span>🤖 <code style="font-size:11px">${esc(model)}</code></span>
+          <span class="dim">${age}</span>
+        </div>
+      </div>
+      <div class="session-actions">
+        <a href="/campaigns/${c.id}/play" class="btn btn-primary btn-sm" style="text-decoration:none">▶ Play</a>
+        <a href="/campaigns/${c.id}" class="btn btn-sm" style="text-decoration:none">World</a>
+        <button class="btn btn-sm" onclick="cloneCampaign('${c.id}', '${esc(c.name)}')">Clone</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteCampaign('${c.id}')">Delete</button>
+      </div>
+    </div>`;
+}
+
+async function cloneCampaign(id, sourceName) {
+  const name = prompt(`New campaign name (clone of "${sourceName}"):`, `${sourceName} — Copy`);
+  if (!name?.trim()) return;
+  try {
+    const res = await fetch(`/api/campaigns/${id}/save-as-template`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name.trim() }),
+    });
+    if (!res.ok) throw new Error(`Server returned ${res.status}`);
+    const data = await res.json();
+    showBanner("success", `Campaign "${data.name}" created. Redirecting…`);
+    setTimeout(() => { window.location.href = `/campaigns/${data.campaign_id}`; }, 1200);
+  } catch (err) {
+    showBanner("error", "Could not clone campaign: " + err.message);
+  }
+}
+
+function openImportTemplateModal() {
+  document.getElementById("import-template-name").value = "";
+  document.getElementById("import-template-file").value = "";
+  document.getElementById("import-template-status").textContent = "";
+  document.getElementById("import-template-modal").classList.remove("hidden");
+  setTimeout(() => document.getElementById("import-template-name").focus(), 50);
+}
+
+function closeImportTemplateModal() {
+  document.getElementById("import-template-modal").classList.add("hidden");
+}
+
+async function runImportTemplate() {
+  const name = document.getElementById("import-template-name").value.trim();
+  const file = document.getElementById("import-template-file").files[0];
+  const statusEl = document.getElementById("import-template-status");
+
+  if (!name) { statusEl.textContent = "Please enter a campaign name."; return; }
+  if (!file) { statusEl.textContent = "Please select a template file."; return; }
+
+  statusEl.textContent = "Importing…";
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    const res = await fetch("/api/campaigns/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ data, campaign_name: name }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `Server returned ${res.status}`);
+    }
+    const result = await res.json();
+    closeImportTemplateModal();
+    showBanner("success", `Campaign "${result.name}" created. Redirecting…`);
+    setTimeout(() => { window.location.href = `/campaigns/${result.campaign_id}`; }, 1200);
+  } catch (e) {
+    statusEl.textContent = `Import failed: ${e.message}`;
+  }
+}
+
+async function deleteCampaign(id) {
+  const card = document.getElementById(`campaign-${id}`);
+  const name = card?.dataset.campaignName || "this campaign";
+  if (!confirm(`Delete campaign "${name}"?\nThis cannot be undone.`)) return;
+  try {
+    const res = await fetch(`/api/campaigns/${id}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(`Server returned ${res.status}`);
+    card?.remove();
+    if (!document.querySelector(`[id^='campaign-']`)) loadCampaigns();
+  } catch (err) {
+    showBanner("error", "Could not delete campaign: " + err.message);
   }
 }
 

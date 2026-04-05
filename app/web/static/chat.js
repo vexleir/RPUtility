@@ -605,7 +605,8 @@ async function refreshMemories() {
 
 function updateMemoryCount(count) {
   if (count !== null) {
-    $("#memory-count").textContent = count;
+    const el = $("#memory-count");
+    if (el) el.textContent = count;
   }
 }
 
@@ -616,7 +617,7 @@ async function deleteMemory(memoryId) {
     if (!res.ok) throw new Error();
     const el = document.getElementById(`mem-${memoryId}`);
     if (el) el.remove();
-    const count = parseInt($("#memory-count").textContent || "0") - 1;
+    const count = parseInt($("#memory-count")?.textContent || "0") - 1;
     updateMemoryCount(Math.max(0, count));
   } catch {
     showError("Failed to delete memory.");

@@ -56,10 +56,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
             pass  # column already exists
 
     # v2 → v3 (Phase 2): world_state table
+    # Note: SQLite does not support adding FK constraints via ALTER TABLE.
+    # Tables created here for the first time include FKs; existing tables retain
+    # their original schema. Application-layer cascade deletes compensate.
     conn.execute("""
         CREATE TABLE IF NOT EXISTS world_state (
             id              TEXT PRIMARY KEY,
-            session_id      TEXT NOT NULL,
+            session_id      TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
             created_at      TEXT NOT NULL,
             updated_at      TEXT NOT NULL,
             category        TEXT NOT NULL DEFAULT 'general',
@@ -76,7 +79,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS contradiction_flags (
             id                  TEXT PRIMARY KEY,
-            session_id          TEXT NOT NULL,
+            session_id          TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
             detected_at         TEXT NOT NULL,
             new_memory_id       TEXT NOT NULL,
             existing_memory_id  TEXT NOT NULL,
@@ -89,7 +92,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS player_objectives (
             id          TEXT PRIMARY KEY,
-            session_id  TEXT NOT NULL,
+            session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
             title       TEXT NOT NULL,
             description TEXT NOT NULL DEFAULT '',
             status      TEXT NOT NULL DEFAULT 'active',
@@ -102,7 +105,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS bookmarks (
             id              TEXT PRIMARY KEY,
-            session_id      TEXT NOT NULL,
+            session_id      TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
             turn_id         TEXT NOT NULL,
             turn_number     INTEGER NOT NULL,
             role            TEXT NOT NULL DEFAULT 'assistant',
@@ -116,7 +119,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS npc_roster (
             id                   TEXT PRIMARY KEY,
-            session_id           TEXT NOT NULL,
+            session_id           TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
             name                 TEXT NOT NULL,
             role                 TEXT NOT NULL DEFAULT '',
             description          TEXT NOT NULL DEFAULT '',
@@ -133,7 +136,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS location_registry (
             id              TEXT PRIMARY KEY,
-            session_id      TEXT NOT NULL,
+            session_id      TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
             name            TEXT NOT NULL,
             description     TEXT NOT NULL DEFAULT '',
             atmosphere      TEXT NOT NULL DEFAULT '',
@@ -148,7 +151,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # Phase 2 additions: in-world clock (one row per session)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS world_clock (
-            session_id  TEXT PRIMARY KEY,
+            session_id  TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
             year        INTEGER NOT NULL DEFAULT 1,
             month       INTEGER NOT NULL DEFAULT 1,
             day         INTEGER NOT NULL DEFAULT 1,
@@ -163,7 +166,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS story_beats (
             id          TEXT PRIMARY KEY,
-            session_id  TEXT NOT NULL,
+            session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
             title       TEXT NOT NULL,
             description TEXT NOT NULL DEFAULT '',
             beat_type   TEXT NOT NULL DEFAULT 'milestone',
@@ -177,7 +180,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # Phase 3 additions: emotional state (one row per session)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS emotional_state (
-            session_id  TEXT PRIMARY KEY,
+            session_id  TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
             mood        TEXT NOT NULL DEFAULT 'neutral',
             stress      REAL NOT NULL DEFAULT 0.0,
             motivation  TEXT NOT NULL DEFAULT '',
@@ -190,7 +193,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS inventory (
             id          TEXT PRIMARY KEY,
-            session_id  TEXT NOT NULL,
+            session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
             name        TEXT NOT NULL,
             description TEXT NOT NULL DEFAULT '',
             condition   TEXT NOT NULL DEFAULT 'good',
@@ -206,7 +209,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS status_effects (
             id              TEXT PRIMARY KEY,
-            session_id      TEXT NOT NULL,
+            session_id      TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
             name            TEXT NOT NULL,
             description     TEXT NOT NULL DEFAULT '',
             effect_type     TEXT NOT NULL DEFAULT 'neutral',
@@ -220,7 +223,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS character_stats (
             id          TEXT PRIMARY KEY,
-            session_id  TEXT NOT NULL,
+            session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
             name        TEXT NOT NULL,
             value       INTEGER NOT NULL DEFAULT 10,
             modifier    INTEGER NOT NULL DEFAULT 0,
@@ -234,7 +237,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS skill_checks (
             id                  TEXT PRIMARY KEY,
-            session_id          TEXT NOT NULL,
+            session_id          TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
             stat_name           TEXT NOT NULL,
             roll                INTEGER NOT NULL,
             modifier            INTEGER NOT NULL DEFAULT 0,
@@ -250,7 +253,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # Phase 4 additions: narrative arc (one row per session)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS narrative_arc (
-            session_id   TEXT PRIMARY KEY,
+            session_id   TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
             current_act  INTEGER NOT NULL DEFAULT 1,
             act_label    TEXT NOT NULL DEFAULT 'Opening',
             tension      REAL NOT NULL DEFAULT 0.0,
@@ -265,7 +268,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS factions (
             id          TEXT PRIMARY KEY,
-            session_id  TEXT NOT NULL,
+            session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
             name        TEXT NOT NULL,
             description TEXT NOT NULL DEFAULT '',
             alignment   TEXT NOT NULL DEFAULT '',
@@ -281,7 +284,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS quests (
             id              TEXT PRIMARY KEY,
-            session_id      TEXT NOT NULL,
+            session_id      TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
             title           TEXT NOT NULL,
             description     TEXT NOT NULL DEFAULT '',
             status          TEXT NOT NULL DEFAULT 'active',
@@ -300,7 +303,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS journal_entries (
             id          TEXT PRIMARY KEY,
-            session_id  TEXT NOT NULL,
+            session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
             title       TEXT NOT NULL,
             content     TEXT NOT NULL,
             turn_number INTEGER NOT NULL DEFAULT 0,
@@ -313,7 +316,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS lore_notes (
             id          TEXT PRIMARY KEY,
-            session_id  TEXT NOT NULL,
+            session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
             title       TEXT NOT NULL,
             content     TEXT NOT NULL,
             category    TEXT NOT NULL DEFAULT 'general',
@@ -324,11 +327,75 @@ def _migrate(conn: sqlite3.Connection) -> None:
         )
     """)
 
+    # Phase 4: NPC expanded fields
+    for col_def in [
+        "status TEXT NOT NULL DEFAULT 'active'",
+        "status_reason TEXT NOT NULL DEFAULT ''",
+        "secrets TEXT NOT NULL DEFAULT ''",
+        "short_term_goal TEXT NOT NULL DEFAULT ''",
+        "long_term_goal TEXT NOT NULL DEFAULT ''",
+        "dev_log TEXT NOT NULL DEFAULT '[]'",
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE npc_cards ADD COLUMN {col_def}")
+        except Exception:
+            pass
+
+    # Phase 4: player character development log
+    try:
+        conn.execute("ALTER TABLE player_characters ADD COLUMN dev_log TEXT NOT NULL DEFAULT '[]'")
+    except Exception:
+        pass
+
+    # Phase 4: faction standing with player
+    for col_def in [
+        "standing_with_player TEXT NOT NULL DEFAULT ''",
+        "relationship_notes TEXT NOT NULL DEFAULT ''",
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE campaign_factions ADD COLUMN {col_def}")
+        except Exception:
+            pass
+
+    # Phase 4: NPC-to-NPC relationship matrix
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS npc_relationships (
+            id          TEXT PRIMARY KEY,
+            campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+            npc_id_a    TEXT NOT NULL,
+            npc_id_b    TEXT NOT NULL,
+            dynamic     TEXT NOT NULL DEFAULT '',
+            trust       TEXT NOT NULL DEFAULT '',
+            hostility   TEXT NOT NULL DEFAULT '',
+            history     TEXT NOT NULL DEFAULT '',
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL,
+            UNIQUE(campaign_id, npc_id_a, npc_id_b)
+        )
+    """)
+
+    # allow_unselected_npcs flag on scenes
+    try:
+        conn.execute("ALTER TABLE campaign_scenes ADD COLUMN allow_unselected_npcs INTEGER NOT NULL DEFAULT 0")
+    except Exception:
+        pass  # column already exists
+
+    # Phase 3: campaign notes (player scratchpad) and world fact categories
+    try:
+        conn.execute("ALTER TABLE campaigns ADD COLUMN notes TEXT NOT NULL DEFAULT ''")
+    except Exception:
+        pass  # column already exists
+
+    try:
+        conn.execute("ALTER TABLE campaign_world_facts ADD COLUMN category TEXT NOT NULL DEFAULT ''")
+    except Exception:
+        pass  # column already exists
+
     # Character aliases: maps alternate names/titles to a canonical name
     conn.execute("""
         CREATE TABLE IF NOT EXISTS character_aliases (
             id              TEXT PRIMARY KEY,
-            session_id      TEXT NOT NULL,
+            session_id      TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
             canonical_name  TEXT NOT NULL,
             alias           TEXT NOT NULL,
             UNIQUE(session_id, alias)
@@ -340,6 +407,131 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE sessions ADD COLUMN scenario_text TEXT")
     except Exception:
         pass  # column already exists
+
+    # ── Campaign system (new architecture) ───────────────────────────────────
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS campaigns (
+            id              TEXT PRIMARY KEY,
+            name            TEXT NOT NULL,
+            model_name      TEXT,
+            style_guide     TEXT NOT NULL DEFAULT '{}',
+            created_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS player_characters (
+            id              TEXT PRIMARY KEY,
+            campaign_id     TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+            name            TEXT NOT NULL DEFAULT 'The Player',
+            appearance      TEXT NOT NULL DEFAULT '',
+            personality     TEXT NOT NULL DEFAULT '',
+            background      TEXT NOT NULL DEFAULT '',
+            wants           TEXT NOT NULL DEFAULT '',
+            fears           TEXT NOT NULL DEFAULT '',
+            how_seen        TEXT NOT NULL DEFAULT '',
+            created_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS campaign_world_facts (
+            id          TEXT PRIMARY KEY,
+            campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+            content     TEXT NOT NULL,
+            fact_order  INTEGER NOT NULL DEFAULT 0,
+            created_at  TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS campaign_places (
+            id              TEXT PRIMARY KEY,
+            campaign_id     TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+            name            TEXT NOT NULL,
+            description     TEXT NOT NULL DEFAULT '',
+            current_state   TEXT NOT NULL DEFAULT '',
+            created_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS npc_cards (
+            id                      TEXT PRIMARY KEY,
+            campaign_id             TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+            name                    TEXT NOT NULL,
+            appearance              TEXT NOT NULL DEFAULT '',
+            personality             TEXT NOT NULL DEFAULT '',
+            role                    TEXT NOT NULL DEFAULT '',
+            relationship_to_player  TEXT NOT NULL DEFAULT '',
+            current_location        TEXT NOT NULL DEFAULT '',
+            current_state           TEXT NOT NULL DEFAULT '',
+            is_alive                INTEGER NOT NULL DEFAULT 1,
+            created_at              TEXT NOT NULL,
+            updated_at              TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS narrative_threads (
+            id          TEXT PRIMARY KEY,
+            campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+            title       TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            status      TEXT NOT NULL DEFAULT 'active',
+            resolution  TEXT NOT NULL DEFAULT '',
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS campaign_scenes (
+            id                  TEXT PRIMARY KEY,
+            campaign_id         TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+            scene_number        INTEGER NOT NULL,
+            title               TEXT NOT NULL DEFAULT '',
+            location            TEXT NOT NULL DEFAULT '',
+            npc_ids             TEXT NOT NULL DEFAULT '[]',
+            intent              TEXT NOT NULL DEFAULT '',
+            tone                TEXT NOT NULL DEFAULT '',
+            turns               TEXT NOT NULL DEFAULT '[]',
+            proposed_summary    TEXT NOT NULL DEFAULT '',
+            confirmed_summary   TEXT NOT NULL DEFAULT '',
+            confirmed           INTEGER NOT NULL DEFAULT 0,
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS chronicle_entries (
+            id                  TEXT PRIMARY KEY,
+            campaign_id         TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+            scene_range_start   INTEGER NOT NULL DEFAULT 0,
+            scene_range_end     INTEGER NOT NULL DEFAULT 0,
+            content             TEXT NOT NULL DEFAULT '',
+            confirmed           INTEGER NOT NULL DEFAULT 0,
+            created_at          TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS campaign_factions (
+            id          TEXT PRIMARY KEY,
+            campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+            name        TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            goals       TEXT NOT NULL DEFAULT '',
+            methods     TEXT NOT NULL DEFAULT '',
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        )
+    """)
 
 
 def _create_tables(conn: sqlite3.Connection) -> None:

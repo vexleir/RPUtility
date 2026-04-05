@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>New Campaign — RP Utility</title>
+  <link rel="stylesheet" href="/static/style.css?v={{CACHE_VER}}">
+</head>
+<body class="index-layout">
+
+  <nav class="topnav">
+    <div class="topnav-title">🎭 <span>RP</span> Utility</div>
+    <div class="topnav-sub"><a href="/" class="muted" style="text-decoration:none">← Back to Home</a></div>
+    <div class="topnav-status">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-label" class="muted">Checking…</span>
+    </div>
+  </nav>
+
+  <div id="banner-container" style="padding: 0 28px; margin-top: 16px;"></div>
+
+  <!-- ── Step 1: Describe your world ────────────────────────────── -->
+  <div id="step-describe" class="wb-step">
+    <div class="wb-step-inner">
+      <h2>New Campaign</h2>
+      <p class="muted" style="margin-bottom:20px">
+        Describe your world in as much or as little detail as you like. The AI will fill in anything
+        you leave out, but will always honour exactly what you write.
+      </p>
+
+      <div class="form-group">
+        <label for="campaign-name-input">Campaign Name</label>
+        <input type="text" id="campaign-name-input" placeholder="e.g. The Shattered Realms" autocomplete="off">
+      </div>
+
+      <div class="form-group">
+        <label for="model-select">Ollama Model <span class="dim">(for world generation)</span></label>
+        <select id="model-select">
+          <option value="">Default model</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="world-description">World Description</label>
+        <textarea id="world-description" rows="12"
+          placeholder="Examples:
+• 'I want to play a powerful wizard in a dark fantasy world.'
+• 'A noir detective in a rain-soaked city where magic is illegal. My character is ex-military, gruff, drinks too much, but has a code of honour.'
+• 'Far future space opera. The Empire just fell. My character is a former imperial soldier trying to find meaning. Key factions: the Remnant Fleet, the Free Colonies, the Church of the Void.'"></textarea>
+        <div class="form-hint">The more you write, the more the AI will preserve your exact vision. Short prompts are totally fine too.</div>
+      </div>
+
+      <div style="display:flex;gap:12px;margin-top:8px">
+        <button class="btn btn-primary" id="generate-btn" onclick="generateWorld()" style="flex:1;justify-content:center">
+          ✨ Generate World
+        </button>
+        <a href="/" class="btn" style="text-decoration:none">Cancel</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Step 1b: Streaming output ───────────────────────────────── -->
+  <div id="step-stream" class="wb-step hidden">
+    <div class="wb-step-inner">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <h2 style="margin:0">Generating World…</h2>
+        <span id="stream-char-count" class="muted" style="font-size:0.85rem"></span>
+      </div>
+      <p class="muted" style="margin-bottom:14px;font-size:0.9rem">
+        The model is writing your world document. You can read along as it builds.
+        The review step opens automatically when generation is complete.
+      </p>
+      <pre id="stream-output" class="wb-stream-output"></pre>
+      <div id="stream-done-msg" class="hidden" style="margin-top:14px;color:var(--green);font-weight:600">
+        ✓ Generation complete — loading review…
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Step 2: Review & edit ────────────────────────────────────── -->
+  <div id="step-review" class="wb-step hidden">
+    <div class="wb-review-layout">
+
+      <!-- Left nav -->
+      <div class="wb-section-nav">
+        <div class="wb-section-nav-title">Sections</div>
+        <button class="wb-nav-btn active" data-section="premise" onclick="showSection('premise')">Premise</button>
+        <button class="wb-nav-btn" data-section="player_character" onclick="showSection('player_character')">Player Character</button>
+        <button class="wb-nav-btn" data-section="world_facts" onclick="showSection('world_facts')">World Facts</button>
+        <button class="wb-nav-btn" data-section="magic_system" onclick="showSection('magic_system')">Magic / Technology</button>
+        <button class="wb-nav-btn" data-section="places" onclick="showSection('places')">Places</button>
+        <button class="wb-nav-btn" data-section="npcs" onclick="showSection('npcs')">NPCs</button>
+        <button class="wb-nav-btn" data-section="narrative_threads" onclick="showSection('narrative_threads')">Narrative Threads</button>
+        <button class="wb-nav-btn" data-section="factions" onclick="showSection('factions')">Factions</button>
+
+        <div style="margin-top:auto;padding-top:20px">
+          <button class="btn btn-primary" onclick="confirmWorld()" style="width:100%;justify-content:center">
+            ✓ Confirm &amp; Create Campaign
+          </button>
+          <button class="btn" onclick="backToDescribe()" style="width:100%;justify-content:center;margin-top:8px">
+            ← Edit Description
+          </button>
+        </div>
+      </div>
+
+      <!-- Main editing area -->
+      <div class="wb-editor-area">
+
+        <!-- Premise -->
+        <div class="wb-section" id="section-premise">
+          <div class="wb-section-header">
+            <h3>Premise</h3>
+            <button class="btn btn-sm" onclick="refineSection('premise')">✨ Refine</button>
+          </div>
+          <p class="muted" style="margin-bottom:12px">The overall narrative overview of your world and its current state.</p>
+          <textarea class="wb-field-textarea" id="field-premise" rows="8"></textarea>
+        </div>
+
+        <!-- Player Character -->
+        <div class="wb-section hidden" id="section-player_character">
+          <div class="wb-section-header">
+            <h3>Player Character</h3>
+            <button class="btn btn-sm" onclick="refineSection('player_character')">✨ Refine</button>
+          </div>
+          <div class="wb-grid-2">
+            <div class="form-group">
+              <label>Name</label>
+              <input type="text" class="wb-field" id="pc-name" placeholder="The Protagonist">
+            </div>
+            <div class="form-group">
+              <label>Role / Title</label>
+              <input type="text" class="wb-field" id="pc-role" placeholder="e.g. Wandering Wizard">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Appearance</label>
+            <textarea class="wb-field" id="pc-appearance" rows="2"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Personality</label>
+            <textarea class="wb-field" id="pc-personality" rows="2"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Background</label>
+            <textarea class="wb-field" id="pc-background" rows="3"></textarea>
+          </div>
+          <div class="wb-grid-2">
+            <div class="form-group">
+              <label>Wants</label>
+              <textarea class="wb-field" id="pc-wants" rows="2"></textarea>
+            </div>
+            <div class="form-group">
+              <label>Fears</label>
+              <textarea class="wb-field" id="pc-fears" rows="2"></textarea>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>How Others See Them <span class="dim">(optional)</span></label>
+            <textarea class="wb-field" id="pc-how-seen" rows="2"></textarea>
+          </div>
+        </div>
+
+        <!-- World Facts -->
+        <div class="wb-section hidden" id="section-world_facts">
+          <div class="wb-section-header">
+            <h3>World Facts</h3>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-sm" onclick="addFact()">+ Add</button>
+              <button class="btn btn-sm" onclick="refineSection('world_facts')">✨ Refine</button>
+            </div>
+          </div>
+          <p class="muted" style="margin-bottom:12px">Key facts about history, politics, and the world's rules. Click any fact to edit it.</p>
+          <div id="facts-list"></div>
+        </div>
+
+        <!-- Magic / Technology -->
+        <div class="wb-section hidden" id="section-magic_system">
+          <div class="wb-section-header">
+            <h3>Magic / Technology System</h3>
+            <button class="btn btn-sm" onclick="refineSection('magic_system')">✨ Refine</button>
+          </div>
+          <p class="muted" style="margin-bottom:12px">Describe how magic, technology, or other special systems work. Leave blank if not applicable.</p>
+          <textarea class="wb-field-textarea" id="field-magic_system" rows="8"></textarea>
+        </div>
+
+        <!-- Places -->
+        <div class="wb-section hidden" id="section-places">
+          <div class="wb-section-header">
+            <h3>Places</h3>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-sm" onclick="addPlace()">+ Add</button>
+              <button class="btn btn-sm" onclick="refineSection('places')">✨ Refine</button>
+            </div>
+          </div>
+          <div id="places-list"></div>
+        </div>
+
+        <!-- NPCs -->
+        <div class="wb-section hidden" id="section-npcs">
+          <div class="wb-section-header">
+            <h3>NPCs</h3>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-sm" onclick="addNpc()">+ Add</button>
+              <button class="btn btn-sm" onclick="refineSection('npcs')">✨ Refine</button>
+            </div>
+          </div>
+          <div id="npcs-list"></div>
+        </div>
+
+        <!-- Narrative Threads -->
+        <div class="wb-section hidden" id="section-narrative_threads">
+          <div class="wb-section-header">
+            <h3>Narrative Threads</h3>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-sm" onclick="addThread()">+ Add</button>
+              <button class="btn btn-sm" onclick="refineSection('narrative_threads')">✨ Refine</button>
+            </div>
+          </div>
+          <p class="muted" style="margin-bottom:12px">The dramatic tensions or mysteries that give the campaign direction.</p>
+          <div id="threads-list"></div>
+        </div>
+
+        <!-- Factions -->
+        <div class="wb-section hidden" id="section-factions">
+          <div class="wb-section-header">
+            <h3>Factions</h3>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-sm" onclick="addFaction()">+ Add</button>
+              <button class="btn btn-sm" onclick="refineSection('factions')">✨ Refine</button>
+            </div>
+          </div>
+          <div id="factions-list"></div>
+        </div>
+
+      </div><!-- /wb-editor-area -->
+    </div><!-- /wb-review-layout -->
+  </div><!-- /step-review -->
+
+  <!-- ── Loading overlay ───────────────────────────────────────────── -->
+  <div id="wb-loading" class="wb-loading hidden">
+    <div class="wb-loading-inner">
+      <div class="spinner" style="width:32px;height:32px;border-width:3px"></div>
+      <div id="wb-loading-msg">Generating your world…</div>
+      <div id="wb-loading-detail" class="muted" style="font-size:0.8rem;margin-top:6px"></div>
+    </div>
+  </div>
+
+  <!-- ── Refine modal ──────────────────────────────────────────────── -->
+  <div id="refine-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeRefine()">
+    <div class="modal" style="max-width:560px">
+      <div class="modal-header">
+        <span id="refine-title">Refine Section</span>
+        <button class="modal-close" onclick="closeRefine()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>What would you like to change?</label>
+          <textarea id="refine-instructions" rows="5"
+            placeholder="e.g. 'Make the magic system more restrictive, with a high cost to casting'
+or 'Add more political intrigue between the factions'
+or 'Give the protagonist a tragic backstory involving their family'"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="submitRefine()">✨ Refine</button>
+        <button class="btn" onclick="closeRefine()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/campaign_new.js?v={{CACHE_VER}}"></script>
+</body>
+</html>

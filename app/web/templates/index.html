@@ -22,9 +22,24 @@
 
   <div class="index-body">
 
-    <!-- ── Left: Sessions ──────────────────────────────────────────── -->
+    <!-- ── Left: Campaigns + Sessions ────────────────────────────── -->
     <div class="sessions-col">
-      <h2>Sessions</h2>
+      <!-- Campaigns -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <h2 style="margin:0">Campaigns</h2>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-sm" onclick="openImportTemplateModal()">⬆ Import Template</button>
+          <a href="/campaigns/new" class="btn btn-primary btn-sm" style="text-decoration:none">+ New Campaign</a>
+        </div>
+      </div>
+      <div class="session-list" id="campaign-list">
+        <div style="display:flex;align-items:center;gap:10px;color:var(--text-muted)">
+          <div class="spinner"></div> Loading…
+        </div>
+      </div>
+
+      <!-- Legacy Sessions -->
+      <h2 style="margin-top:28px">Sessions <span class="dim" style="font-size:0.75rem;font-weight:400">(legacy)</span></h2>
       <div class="session-list" id="session-list">
         <div style="display:flex;align-items:center;gap:10px;color:var(--text-muted)">
           <div class="spinner"></div> Loading…
@@ -146,6 +161,28 @@
     <div class="modal-box">
       <button class="modal-close" onclick="closeDetailModal()">✕</button>
       <div id="modal-content"></div>
+    </div>
+  </div>
+
+  <!-- ── Import Template Modal ───────────────────────────────────────── -->
+  <div id="import-template-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeImportTemplateModal()">
+    <div class="modal-box" style="max-width:480px">
+      <button class="modal-close" onclick="closeImportTemplateModal()">✕</button>
+      <h3 style="margin:0 0 8px">Import World Template</h3>
+      <p class="dim" style="font-size:13px;margin-bottom:16px">Load a <code>_template.json</code> file shared by another user. This creates a new campaign pre-populated with their world document — NPCs, factions, places, and lore. No scene history is imported.</p>
+      <div class="form-group">
+        <label>Campaign Name</label>
+        <input type="text" id="import-template-name" placeholder="Name for the new campaign">
+      </div>
+      <div class="form-group">
+        <label>Template File <span class="dim">(.json)</span></label>
+        <input type="file" id="import-template-file" accept=".json" style="color:var(--text)">
+      </div>
+      <div id="import-template-status" class="dim" style="font-size:13px;min-height:18px"></div>
+      <div style="display:flex;gap:10px;margin-top:16px">
+        <button class="btn btn-primary" onclick="runImportTemplate()" style="flex:1;justify-content:center">Import →</button>
+        <button class="btn" onclick="closeImportTemplateModal()">Cancel</button>
+      </div>
     </div>
   </div>
 

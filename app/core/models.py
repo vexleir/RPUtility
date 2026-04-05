@@ -6,7 +6,7 @@ All persistent structures are defined here using Pydantic v2.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, UTC
 from enum import Enum
 from typing import Optional
 
@@ -52,8 +52,8 @@ class ImportanceLevel(str, Enum):
 class MemoryEntry(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     type: MemoryType
     title: str
     content: str
@@ -75,8 +75,8 @@ class WorldStateEntry(BaseModel):
     """Durable world-state facts derived from memory — separate from lorebooks."""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     category: str       # e.g. "faction", "political", "environment", "secret"
     title: str
     content: str
@@ -90,7 +90,7 @@ class ContradictonFlag(BaseModel):
     """Record of a detected contradiction between new and existing memory."""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str
-    detected_at: datetime = Field(default_factory=datetime.utcnow)
+    detected_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     new_memory_id: str
     existing_memory_id: str
     description: str
@@ -106,7 +106,7 @@ class SceneState(BaseModel):
     location: str = "Unknown"
     active_characters: list[str] = Field(default_factory=list)
     summary: str = ""
-    last_updated: datetime = Field(default_factory=datetime.utcnow)
+    last_updated: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 # ─────────────────────────────────────────────
@@ -122,7 +122,7 @@ class RelationshipState(BaseModel):
     respect: float = 0.0     # -1.0 to 1.0
     affection: float = 0.0   # -1.0 to 1.0
     hostility: float = 0.0   # 0.0 to 1.0
-    last_updated: datetime = Field(default_factory=datetime.utcnow)
+    last_updated: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 # ─────────────────────────────────────────────
@@ -178,7 +178,7 @@ class ConversationTurn(BaseModel):
     turn_number: int
     role: str            # "user" or "assistant"
     content: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 # ─────────────────────────────────────────────
@@ -191,8 +191,8 @@ class Session(BaseModel):
     character_name: str
     lorebook_name: Optional[str] = None
     model_name: Optional[str] = None   # overrides config model when set
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    last_active: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    last_active: datetime = Field(default_factory=lambda: datetime.now(UTC))
     turn_count: int = 0
     scenario_text: Optional[str] = None  # set when session created via Scenario Mode
 
@@ -213,8 +213,8 @@ class PlayerObjective(BaseModel):
     title: str
     description: str = ""
     status: ObjectiveStatus = ObjectiveStatus.ACTIVE
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 # ─────────────────────────────────────────────
@@ -229,7 +229,7 @@ class Bookmark(BaseModel):
     role: str
     content_preview: str = ""   # first 200 chars of turn content
     note: str = ""
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 # ─────────────────────────────────────────────
@@ -246,8 +246,8 @@ class NpcEntry(BaseModel):
     last_known_location: str = ""
     is_alive: bool = True
     tags: list[str] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 # ─────────────────────────────────────────────
@@ -263,8 +263,8 @@ class LocationEntry(BaseModel):
     notes: str = ""
     tags: list[str] = Field(default_factory=list)
     visit_count: int = 0
-    first_visited: datetime = Field(default_factory=datetime.utcnow)
-    last_visited: datetime = Field(default_factory=datetime.utcnow)
+    first_visited: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    last_visited: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 # ─────────────────────────────────────────────
@@ -279,7 +279,7 @@ class WorldClock(BaseModel):
     hour: int = 12                    # 0–23
     era_label: str = ""               # "Third Age", "Year of the Dragon", etc.
     notes: str = ""
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @property
     def time_of_day(self) -> str:
@@ -317,7 +317,7 @@ class EmotionalState(BaseModel):
     stress: float = 0.0               # 0.0 (calm) → 1.0 (breaking point)
     motivation: str = ""              # what's driving the character right now
     notes: str = ""
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @property
     def stress_label(self) -> str:
@@ -346,8 +346,8 @@ class InventoryItem(BaseModel):
     quantity: int = 1
     tags: list[str] = Field(default_factory=list)
     is_equipped: bool = False
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 # ─────────────────────────────────────────────
@@ -368,7 +368,7 @@ class StatusEffect(BaseModel):
     effect_type: EffectType = EffectType.NEUTRAL
     severity: str = "mild"            # mild / moderate / severe
     duration_turns: int = 0           # 0 = permanent until manually removed
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 # ─────────────────────────────────────────────
@@ -389,8 +389,8 @@ class CharacterStat(BaseModel):
     value: int = 10                 # raw stat value
     modifier: int = 0               # manual override; 0 = use derived
     category: str = "attribute"     # "attribute", "skill", "saving_throw", "custom"
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @property
     def effective_modifier(self) -> int:
@@ -409,7 +409,7 @@ class SkillCheckResult(BaseModel):
     outcome: CheckOutcome
     narrative_context: str = ""     # what the check was for
     turn_number: int = 0
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 # ─────────────────────────────────────────────
@@ -424,7 +424,7 @@ class NarrativeArc(BaseModel):
     pacing: str = "building"        # "slow", "building", "intense", "climactic", "falling"
     themes: list[str] = Field(default_factory=list)
     arc_notes: str = ""
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @property
     def tension_label(self) -> str:
@@ -453,8 +453,8 @@ class Faction(BaseModel):
     standing: float = 0.0           # -1.0 (enemy) → 1.0 (allied); player's standing
     tags: list[str] = Field(default_factory=list)
     notes: str = ""
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @property
     def standing_label(self) -> str:
@@ -490,7 +490,7 @@ class StoryBeat(BaseModel):
     turn_number: int = 0
     importance: ImportanceLevel = ImportanceLevel.MEDIUM
     tags: list[str] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 # ─────────────────────────────────────────────
@@ -524,8 +524,8 @@ class Quest(BaseModel):
     importance: ImportanceLevel = ImportanceLevel.MEDIUM
     stages: list[QuestStage] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @property
     def stages_done(self) -> int:
@@ -545,7 +545,7 @@ class JournalEntry(BaseModel):
     content: str
     turn_number: int = 0
     tags: list[str] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class LoreNote(BaseModel):
@@ -556,5 +556,197 @@ class LoreNote(BaseModel):
     category: str = "general"   # history, magic, faction, character, location, etc.
     source: str = ""             # who told the player / where it was discovered
     tags: list[str] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+# ─────────────────────────────────────────────
+# Campaign System (new architecture)
+# ─────────────────────────────────────────────
+
+class StyleGuide(BaseModel):
+    """AI narration style preferences for a campaign."""
+    prose_style: str = "atmospheric"   # terse / atmospheric / literary / pulpy
+    perspective: str = "third_past"    # third_past / second_present
+    tone: str = "dark"                 # dark / grounded / mythic / hopeful / gritty
+    avoids: str = ""                   # free text: what the AI should NOT do
+    magic_system: str = ""             # world magic / technology rules fed to AI
+
+
+class Campaign(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    model_name: Optional[str] = None
+    style_guide: StyleGuide = Field(default_factory=StyleGuide)
+    notes: str = ""                    # player scratchpad — never sent to AI
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class PcDevEntry(BaseModel):
+    """A timestamped note in the player character's development log."""
+    scene_number: int = 0
+    note: str
+
+
+class PlayerCharacter(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    campaign_id: str
+    name: str = "The Player"
+    appearance: str = ""
+    personality: str = ""
+    background: str = ""
+    wants: str = ""
+    fears: str = ""
+    how_seen: str = ""
+    dev_log: list[PcDevEntry] = Field(default_factory=list)  # Phase 4
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class CampaignWorldFact(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    campaign_id: str
+    content: str
+    category: str = ""                 # e.g. "history", "geography", "politics", "magic"
+    fact_order: int = 0
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class CampaignPlace(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    campaign_id: str
+    name: str
+    description: str = ""
+    current_state: str = ""
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class NpcStatus(str, Enum):
+    ACTIVE      = "active"
+    FLED        = "fled"
+    IMPRISONED  = "imprisoned"
+    TRANSFORMED = "transformed"
+    DEAD        = "dead"
+
+
+class NpcDevEntry(BaseModel):
+    """A timestamped note in an NPC's development log."""
+    scene_number: int = 0
+    note: str
+
+
+class NpcCard(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    campaign_id: str
+    name: str
+    appearance: str = ""
+    personality: str = ""
+    role: str = ""
+    relationship_to_player: str = ""
+    current_location: str = ""
+    current_state: str = ""
+    # Phase 4 additions
+    status: NpcStatus = NpcStatus.ACTIVE
+    status_reason: str = ""          # why they fled/died/etc.
+    secrets: str = ""                # hidden knowledge — sent to AI, not shown in UI
+    short_term_goal: str = ""        # immediate motivation
+    long_term_goal: str = ""         # deeper ambition
+    dev_log: list[NpcDevEntry] = Field(default_factory=list)
+    # Legacy compat — computed from status
+    @property
+    def is_alive(self) -> bool:
+        return self.status != NpcStatus.DEAD
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class NpcRelationship(BaseModel):
+    """Relationship between two NPCs in a campaign."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    campaign_id: str
+    npc_id_a: str
+    npc_id_b: str
+    dynamic: str = ""        # e.g. "allies", "rivals", "old friends", "master/servant"
+    trust: str = ""          # free-text descriptor: "high", "none", "broken"
+    hostility: str = ""      # free-text: "none", "simmering", "open hatred"
+    history: str = ""        # brief backstory of their relationship
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class ThreadStatus(str, Enum):
+    ACTIVE = "active"
+    DORMANT = "dormant"
+    RESOLVED = "resolved"
+
+
+class NarrativeThread(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    campaign_id: str
+    title: str
+    description: str = ""
+    status: ThreadStatus = ThreadStatus.ACTIVE
+    resolution: str = ""
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class SceneTurn(BaseModel):
+    role: str          # "player" or "narrator"
+    content: str
+
+
+class CampaignScene(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    campaign_id: str
+    scene_number: int
+    title: str = ""
+    location: str = ""
+    npc_ids: list[str] = Field(default_factory=list)
+    intent: str = ""
+    tone: str = ""
+    turns: list[SceneTurn] = Field(default_factory=list)
+    proposed_summary: str = ""
+    confirmed_summary: str = ""
+    confirmed: bool = False
+    allow_unselected_npcs: bool = False   # AI may incorporate world NPCs not added to scene
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class ChronicleEntry(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    campaign_id: str
+    scene_range_start: int = 0
+    scene_range_end: int = 0
+    content: str = ""
+    confirmed: bool = False
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class CampaignFaction(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    campaign_id: str
+    name: str
+    description: str = ""
+    goals: str = ""
+    methods: str = ""
+    standing_with_player: str = ""   # Phase 4: e.g. "hostile", "neutral", "allied"
+    relationship_notes: str = ""     # Phase 4: free-text history with the player
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class WorldBuildResult(BaseModel):
+    """Structured output from the AI world builder."""
+    premise: str = ""
+    world_facts: list[str] = Field(default_factory=list)
+    magic_system: str = ""
+    factions: list[dict] = Field(default_factory=list)
+    player_character: dict = Field(default_factory=dict)
+    places: list[dict] = Field(default_factory=list)
+    npcs: list[dict] = Field(default_factory=list)
+    narrative_threads: list[dict] = Field(default_factory=list)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

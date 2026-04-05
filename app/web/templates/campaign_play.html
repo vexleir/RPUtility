@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Scene — RP Utility</title>
+  <link rel="stylesheet" href="/static/style.css?v={{CACHE_VER}}">
+  <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+  <style>
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  </style>
+</head>
+<body class="chat-layout">
+
+  <!-- ── Header ─────────────────────────────────────────────────────── -->
+  <header class="chat-header">
+    <a id="back-link" href="/" class="btn btn-ghost btn-sm">← Campaign</a>
+
+    <div class="chat-header-info">
+      <div class="chat-header-title" id="scene-title">Loading…</div>
+      <div class="chat-header-sub">
+        <span id="campaign-name-badge" class="muted"></span>
+        <span class="dim" id="scene-location-badge"></span>
+        <span class="badge" id="scene-num-badge"></span>
+        <span class="tone-badge hidden" id="scene-tone-badge"></span>
+      </div>
+    </div>
+
+    <div class="chat-header-actions">
+      <button class="btn btn-ghost btn-sm" id="undo-btn" onclick="undoLastTurn()" title="Undo last exchange" style="display:none">↩ Undo</button>
+      <button class="btn btn-ghost btn-sm" onclick="openModal('scene-context-modal')" title="Scene context">🗺</button>
+      <button class="btn btn-ghost btn-sm" onclick="openSceneSearch()" title="Search this scene">🔍</button>
+      <button class="btn btn-ghost btn-sm" onclick="openPromptPreview()" title="View AI system prompt">⚙ Prompt</button>
+      <button class="btn btn-ghost btn-sm" onclick="openModal('gen-settings-modal')" title="Generation settings">⚙️</button>
+      <button class="btn btn-sm btn-danger" id="end-scene-btn" onclick="openEndScene()" title="End this scene">■ End Scene</button>
+    </div>
+  </header>
+
+  <div class="banner banner-error" id="error-banner" style="display:none;margin:8px 16px;border-radius:8px"></div>
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- ── Scene setup panel (shown before first turn) ─────────────────── -->
+  <div id="scene-setup-panel" class="scene-setup-panel hidden">
+    <div class="scene-setup-inner">
+      <h3>Scene Setup</h3>
+      <p class="muted">Establish the intent for this scene before play begins. The AI will honour this context throughout.</p>
+      <div class="form-group">
+        <label>Scene Title <span class="dim">(optional)</span></label>
+        <input type="text" id="setup-title" placeholder="e.g. The Meeting at the Broken Wheel">
+      </div>
+      <div class="form-group">
+        <label>Location</label>
+        <input type="text" id="setup-location" list="location-suggestions" placeholder="Where does this scene take place?">
+        <datalist id="location-suggestions"></datalist>
+      </div>
+      <div class="form-group">
+        <label>NPCs Present</label>
+        <div id="npc-checkboxes" class="npc-checkbox-group"></div>
+      </div>
+      <div class="form-group">
+        <label>Scene Intent <span class="dim">(what should happen?)</span></label>
+        <textarea id="setup-intent" rows="3"
+          placeholder="e.g. The player confronts the guild master about the stolen artefact."></textarea>
+      </div>
+      <div class="form-group">
+        <label>Tone <span class="dim">(optional)</span></label>
+        <input type="text" id="setup-tone" placeholder="e.g. tense, melancholy, comedic">
+      </div>
+      <div class="form-group">
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+          <input type="checkbox" id="setup-allow-unselected-npcs" style="margin-top:3px;flex-shrink:0">
+          <span>
+            Allow AI to freely incorporate existing NPCs into this scene
+            <span class="dim" style="display:block;font-size:0.8rem;font-weight:400;margin-top:2px">
+              When unchecked, the AI will only use NPCs you selected above, but may still create brand new characters.
+              When checked, any NPC from the world document may appear if the story calls for it.
+            </span>
+          </span>
+        </label>
+      </div>
+      <div style="display:flex;gap:12px;margin-top:8px">
+        <button class="btn btn-primary" onclick="beginScene()" style="flex:1;justify-content:center">Begin Scene →</button>
+        <a id="cancel-setup-link" href="/" class="btn" style="text-decoration:none">Cancel</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Chat body ──────────────────────────────────────────────────── -->
+  <div class="chat-body" id="chat-body" style="display:none">
+    <div class="messages-col">
+      <div class="messages-area" id="messages-area"></div>
+
+      <!-- Input -->
+      <div class="input-area" id="input-area">
+        <div class="input-row">
+          <textarea
+            id="user-input"
+            class="user-input"
+            placeholder="What do you do?"
+            rows="3"
+            autocomplete="off"
+            spellcheck="true"
+          ></textarea>
+          <button class="btn btn-primary send-btn" id="send-btn" onclick="sendMessage()">Send</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sidebar (world context, NPCs, threads) -->
+    <div class="chat-sidebar" id="chat-sidebar">
+
+      <!-- NPCs in scene -->
+      <div class="sidebar-section">
+        <div class="sidebar-section-title" style="display:flex;justify-content:space-between;align-items:center">
+          <span>In This Scene</span>
+          <button class="btn-icon" style="font-size:16px;line-height:1" title="Add NPC to world" onclick="openQuickAddNpc()">+</button>
+        </div>
+        <div id="sidebar-npcs" class="sidebar-content"></div>
+      </div>
+
+      <!-- Active threads -->
+      <div class="sidebar-section">
+        <div class="sidebar-section-title">Narrative Threads</div>
+        <div id="sidebar-threads" class="sidebar-content"></div>
+      </div>
+
+      <!-- World facts quick ref -->
+      <div class="sidebar-section">
+        <div class="sidebar-section-title">World Facts</div>
+        <div id="sidebar-facts" class="sidebar-content"></div>
+      </div>
+
+      <!-- Player scratchpad -->
+      <div class="sidebar-section">
+        <div class="sidebar-section-title">My Notes <span class="muted" style="font-size:0.75rem;font-weight:400">(private)</span></div>
+        <textarea
+          id="scratchpad"
+          class="scratchpad-input"
+          placeholder="Notes, theories, plans… never sent to the AI."
+          rows="6"
+        ></textarea>
+        <div id="scratchpad-status" class="scratchpad-status muted"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── End Scene modal ───────────────────────────────────────────── -->
+  <div id="end-scene-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('end-scene-modal')">
+    <div class="modal" style="max-width:560px">
+      <div class="modal-header">
+        <span>End Scene</span>
+        <button class="modal-close" onclick="closeModal('end-scene-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted" style="margin-bottom:12px">Write a summary of what happened in this scene. This becomes the confirmed record.</p>
+        <div class="form-group">
+          <label>Scene Summary</label>
+          <textarea id="scene-summary-input" rows="6"
+            placeholder="Summarise what happened, what was decided, what changed…"></textarea>
+        </div>
+        <div id="end-scene-suggest-row" style="margin-top:8px">
+          <button class="btn btn-sm" onclick="suggestSummary()">✨ Suggest Summary</button>
+          <span class="muted" id="suggest-loading" style="display:none;margin-left:8px">Generating…</span>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="confirmEndScene()">✓ Confirm &amp; Close Scene</button>
+        <button class="btn" onclick="closeModal('end-scene-modal')">Keep Playing</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── World Updates modal (post-scene suggestions) ────────────── -->
+  <div id="world-updates-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:640px;max-height:85vh;display:flex;flex-direction:column">
+      <div class="modal-header">
+        <span>Story Impact — Suggested World Updates</span>
+        <button class="modal-close" onclick="skipWorldUpdates()">✕</button>
+      </div>
+      <div class="modal-body" id="world-updates-body" style="overflow-y:auto;flex:1">
+        <p class="muted" style="margin-bottom:16px">
+          Based on what happened in this scene, the following world document updates are suggested.
+          Uncheck any you want to skip, then click Apply.
+        </p>
+        <div id="wu-npc-section" class="hidden">
+          <h4 style="margin-bottom:8px">NPC Changes</h4>
+          <div id="wu-npc-list"></div>
+        </div>
+        <div id="wu-facts-section" class="hidden" style="margin-top:16px">
+          <h4 style="margin-bottom:8px">New World Facts</h4>
+          <div id="wu-facts-list"></div>
+        </div>
+        <div id="wu-threads-section" class="hidden" style="margin-top:16px">
+          <h4 style="margin-bottom:8px">Narrative Thread Updates</h4>
+          <div id="wu-threads-list"></div>
+        </div>
+        <div id="wu-none-msg" class="hidden muted" style="text-align:center;padding:24px 0">
+          No world document updates detected for this scene.
+        </div>
+      </div>
+      <div class="modal-footer" id="world-updates-footer">
+        <button class="btn btn-primary" onclick="applyWorldUpdates()">✓ Apply Selected</button>
+        <button class="btn" onclick="skipWorldUpdates()">Skip</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Scene context modal ──────────────────────────────────────── -->
+  <div id="scene-context-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('scene-context-modal')">
+    <div class="modal" style="max-width:680px;max-height:80vh;overflow-y:auto">
+      <div class="modal-header">
+        <span>Scene Context</span>
+        <button class="modal-close" onclick="closeModal('scene-context-modal')">✕</button>
+      </div>
+      <div class="modal-body" id="scene-context-body"></div>
+    </div>
+  </div>
+
+  <!-- ── Generation settings modal ────────────────────────────────── -->
+  <div id="gen-settings-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('gen-settings-modal')">
+    <div class="modal" style="max-width:440px">
+      <div class="modal-header">
+        <span>Generation Settings</span>
+        <button class="modal-close" onclick="closeModal('gen-settings-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Temperature <span class="muted" id="temp-display">0.8</span></label>
+          <input type="range" id="gs-temperature" min="0" max="2" step="0.05" value="0.8"
+            oninput="document.getElementById('temp-display').textContent=this.value">
+        </div>
+        <div class="form-group">
+          <label>Max Tokens</label>
+          <input type="number" id="gs-max-tokens" value="1024" min="64" max="4096" step="64">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="closeModal('gen-settings-modal')">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Quick-add NPC modal ──────────────────────────────────────── -->
+  <div id="quick-npc-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('quick-npc-modal')">
+    <div class="modal" style="max-width:520px">
+      <div class="modal-header">
+        <span>Add NPC to World</span>
+        <button class="modal-close" onclick="closeModal('quick-npc-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted" style="margin-bottom:12px">Create an NPC card for someone who appeared in this scene. They'll be added to the world document and this scene.</p>
+        <div class="wb-grid-2">
+          <div class="form-group"><label>Name *</label><input type="text" id="qnpc-name" class="wb-field"></div>
+          <div class="form-group"><label>Role</label><input type="text" id="qnpc-role" class="wb-field" placeholder="e.g. innkeeper, guard"></div>
+        </div>
+        <div class="form-group"><label>Personality</label><textarea id="qnpc-personality" class="wb-field" rows="2"></textarea></div>
+        <div class="form-group"><label>Current State <span class="dim">(optional)</span></label><input type="text" id="qnpc-state" class="wb-field" placeholder="e.g. nervous, wounded"></div>
+        <div class="form-group">
+          <label><input type="checkbox" id="qnpc-add-to-scene" checked> Add to this scene's NPC list</label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="saveQuickNpc()">Save NPC</button>
+        <button class="btn" onclick="closeModal('quick-npc-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Scene search modal ───────────────────────────────────────── -->
+  <div id="scene-search-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('scene-search-modal')">
+    <div class="modal" style="max-width:620px;max-height:80vh;display:flex;flex-direction:column">
+      <div class="modal-header">
+        <span>Search This Scene</span>
+        <button class="modal-close" onclick="closeModal('scene-search-modal')">✕</button>
+      </div>
+      <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;flex:1;overflow:hidden">
+        <input type="text" id="scene-search-input" class="wb-field" placeholder="Search dialogue and narration…"
+          oninput="runSceneSearch()" style="width:100%;box-sizing:border-box">
+        <div id="scene-search-results" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:6px">
+          <div class="muted" style="font-size:0.85rem">Type to search within this scene's turns.</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeModal('scene-search-modal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Prompt preview modal ──────────────────────────────────────── -->
+  <div id="prompt-preview-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('prompt-preview-modal')">
+    <div class="modal" style="max-width:760px;max-height:88vh;display:flex;flex-direction:column">
+      <div class="modal-header">
+        <span>AI System Prompt Preview</span>
+        <button class="modal-close" onclick="closeModal('prompt-preview-modal')">✕</button>
+      </div>
+      <div class="modal-body" style="overflow-y:auto;flex:1">
+        <p class="muted" style="margin-bottom:12px;font-size:0.85rem">This is the exact context the AI receives at the start of each turn. Use it to debug or tune world document entries.</p>
+        <div id="prompt-preview-loading" class="muted">Loading…</div>
+        <pre id="prompt-preview-text" style="display:none;white-space:pre-wrap;font-size:12px;line-height:1.6;background:var(--surface2);padding:16px;border-radius:6px;overflow-x:auto"></pre>
+      </div>
+      <div class="modal-footer">
+        <span class="muted" id="prompt-preview-stats" style="margin-right:auto;font-size:0.8rem"></span>
+        <button class="btn" onclick="closeModal('prompt-preview-modal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/campaign_play.js?v={{CACHE_VER}}"></script>
+  <script>const CAMPAIGN_ID = "{{CAMPAIGN_ID}}";</script>
+</body>
+</html>
