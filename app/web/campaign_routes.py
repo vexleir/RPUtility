@@ -2283,21 +2283,21 @@ def scene_chat_stream(campaign_id: str, scene_id: str, req: SceneChatRequest):
 
 # ── Post-scene AI tools ───────────────────────────────────────────────────────
 
-_SUGGEST_SUMMARY_SYSTEM = """You are a campaign record-keeper performing an OUT-OF-CHARACTER analysis task.
+_SUGGEST_SUMMARY_SYSTEM = """You are a campaign record-keeper performing an OUT-OF-CHARACTER extraction task.
 
 IMPORTANT: The roleplay scene is OVER. Do NOT continue the story. Do NOT write any new dialogue, narration, or fiction. Do NOT act as the narrator or any character.
 
-Your only job is to write a thorough factual, past-tense summary of EVERYTHING that happened across the ENTIRE scene transcript you are given. Cover events from start to finish — do not skip or compress important moments.
+Your job is to extract and record ONLY what is explicitly stated in the transcript — nothing more.
 
 Rules:
-- Write as many sentences as needed to capture every significant event, revelation, decision, and outcome in the scene — do not artificially limit the length
-- Work chronologically through the scene from beginning to end
-- Mention every important character action, piece of information revealed, conflict, decision, and change in situation
-- Use past tense (e.g. "The player confronted...", "Elara revealed...", "The party escaped...")
-- Be specific about names, places, and outcomes
-- Do NOT use present tense, future tense, or continue any storyline
+- ONLY include details, events, names, places, and outcomes that appear verbatim or directly in the transcript
+- Do NOT infer, speculate, assume, or invent ANY detail that is not explicitly stated in the text
+- Do NOT fill gaps, embellish, or "round out" the record — if it was not stated, it does not exist
+- Work chronologically from beginning to end of the transcript
+- Write in plain past tense prose (e.g. "The player asked...", "Elara said...", "The party moved to...")
+- Cover every significant event from start to finish — do not skip or compress
 - Do NOT add commentary, headings, bullet points, labels, or markdown formatting
-- Output ONLY the summary as plain prose paragraphs — nothing else"""
+- Output ONLY the summary as plain prose — nothing else"""
 
 _SUGGEST_UPDATES_SYSTEM = """You are a world-state assistant for a collaborative roleplay campaign.
 A scene has just concluded. Analyse the transcript and suggest concrete updates to the world document
@@ -2373,7 +2373,7 @@ def suggest_scene_summary(campaign_id: str, scene_id: str):
             ],
             "stream": False,
             "options": {
-                "temperature": 0.5,
+                "temperature": 0.1,
                 "num_predict": 2048,
                 "num_ctx": config.context_window,
             },
