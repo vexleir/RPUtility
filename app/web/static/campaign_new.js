@@ -483,11 +483,12 @@ function closeRefine() {
 async function submitRefine() {
   const instructions = document.getElementById("refine-instructions").value.trim();
   if (!instructions) return;
+  const section = _refineTarget;
   closeRefine();
   syncWorldFromForm();
 
   const modelName = document.getElementById("model-select").value;
-  showLoading(`Refining: ${SECTION_LABELS[_refineTarget] || _refineTarget}…`, "");
+  showLoading(`Refining: ${SECTION_LABELS[section] || section}…`, "");
 
   try {
     const res = await fetch("/api/campaigns/world-builder/refine/stream", {
@@ -495,7 +496,7 @@ async function submitRefine() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         current: _world,
-        section: _refineTarget,
+        section,
         instructions,
         model_name: modelName || null,
       }),
@@ -525,7 +526,7 @@ async function submitRefine() {
     _world = data;
     hideLoading();
     populateAllSections();
-    showSection(_refineTarget);
+    showSection(section);
   } catch (e) {
     hideLoading();
     showBanner(`Refinement failed: ${e.message}`, "error");

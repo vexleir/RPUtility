@@ -73,6 +73,15 @@ function renderAll() {
     document.getElementById("campaign-model").textContent = `Model: ${_campaign.model_name}`;
   document.title = `${_campaign?.name || "Campaign"} — RP Utility`;
 
+  // Campaign cover image
+  const coverImg = document.getElementById("campaign-cover-img");
+  const coverPlaceholder = document.getElementById("campaign-cover-placeholder");
+  if (_campaign?.cover_image && coverImg) {
+    coverImg.src = _campaign.cover_image;
+    coverImg.classList.remove("hidden");
+    if (coverPlaceholder) coverPlaceholder.classList.add("hidden");
+  }
+
   // World doc
   const facts = _facts.filter(f => f.content);
   const premise = facts.length && facts[0].content.length > 80 ? facts[0].content : null;
@@ -145,6 +154,21 @@ function renderAll() {
 
 function renderPcCard() {
   const el = document.getElementById("pc-card");
+
+  // Portrait display
+  const portraitImg         = document.getElementById("pc-portrait-img");
+  const portraitPlaceholder = document.getElementById("pc-portrait-placeholder");
+  if (portraitImg && portraitPlaceholder) {
+    if (_pc?.portrait_image) {
+      portraitImg.src = _pc.portrait_image;
+      portraitImg.classList.remove("hidden");
+      portraitPlaceholder.style.display = "none";
+    } else {
+      portraitImg.classList.add("hidden");
+      portraitPlaceholder.style.display = "";
+    }
+  }
+
   if (!_pc || !_pc.name) {
     el.innerHTML = '<span class="muted">No player character yet. Click Edit to add one.</span>';
     return;
@@ -568,14 +592,25 @@ function renderNpcList() {
     const sub = npc.role || "";
     div.innerHTML = `
       <div class="entity-card-row">
-        <div>
-          <div class="entity-name">${escHtml(npc.name)} ${statusBadge}</div>
-          ${sub ? `<div class="entity-sub muted">${escHtml(sub.substring(0, 80))}${sub.length > 80 ? "…" : ""}</div>` : ""}
+        <div style="display:flex;align-items:center;gap:10px">
+          <img class="npc-portrait-avatar${npc.portrait_image ? "" : " hidden"}"
+               src="${npc.portrait_image ? escHtml(npc.portrait_image) : ""}"
+               data-npc-avatar="${npc.id}"
+               alt="${escHtml(npc.name)}">
+          <div>
+            <div class="entity-name">${escHtml(npc.name)} ${statusBadge}</div>
+            ${sub ? `<div class="entity-sub muted">${escHtml(sub.substring(0, 80))}${sub.length > 80 ? "…" : ""}</div>` : ""}
+          </div>
         </div>
-        <button class="btn-icon" title="Edit">✎</button>
+        <div style="display:flex;gap:4px">
+          <button class="btn-icon" title="Generate portrait" data-action="img">🎨</button>
+          <button class="btn-icon" title="Edit" data-action="edit">✎</button>
+        </div>
       </div>
     `;
-    div.querySelector("button").addEventListener("click", () => openEditNpc(npc));
+    div.querySelector('[data-action="edit"]').addEventListener("click", () => openEditNpc(npc));
+    div.querySelector('[data-action="img"]').addEventListener("click", () =>
+      openImgGen("npc", { npcId: npc.id, npcName: npc.name }));
     container.appendChild(div);
   });
 }
@@ -617,6 +652,8 @@ function openEditNpc(npc) {
   document.getElementById("npc-id").value = npc?.id || "";
   document.getElementById("npc-name").value = npc?.name || "";
   document.getElementById("npc-role").value = npc?.role || "";
+  document.getElementById("npc-gender").value = npc?.gender || "";
+  document.getElementById("npc-age").value = npc?.age || "";
   document.getElementById("npc-appearance").value = npc?.appearance || "";
   document.getElementById("npc-personality").value = npc?.personality || "";
   document.getElementById("npc-rel").value = npc?.relationship_to_player || "";
@@ -683,6 +720,8 @@ async function saveNpc() {
     id: id || null,
     name: document.getElementById("npc-name").value.trim(),
     role: document.getElementById("npc-role").value.trim(),
+    gender: document.getElementById("npc-gender").value.trim(),
+    age: document.getElementById("npc-age").value.trim(),
     appearance: document.getElementById("npc-appearance").value.trim(),
     personality: document.getElementById("npc-personality").value.trim(),
     relationship_to_player: document.getElementById("npc-rel").value.trim(),

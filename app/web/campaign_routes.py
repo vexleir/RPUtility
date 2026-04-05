@@ -116,6 +116,8 @@ class SaveNpcRequest(BaseModel):
     appearance: str = ""
     personality: str = ""
     role: str = ""
+    gender: str = ""
+    age: str = ""
     relationship_to_player: str = ""
     current_location: str = ""
     current_state: str = ""
@@ -396,6 +398,8 @@ def save_npc(campaign_id: str, req: SaveNpcRequest):
         appearance=req.appearance,
         personality=req.personality,
         role=req.role,
+        gender=req.gender,
+        age=req.age,
         relationship_to_player=req.relationship_to_player,
         current_location=req.current_location,
         current_state=req.current_state,
@@ -1236,6 +1240,257 @@ def save_as_template(campaign_id: str, req: SaveTemplateRequest):
     return {"campaign_id": tid, "name": req.name}
 
 
+# ── Image storage ─────────────────────────────────────────────────────────────
+
+class SaveImageRequest(BaseModel):
+    data_url: str
+
+
+@router.patch("/{campaign_id}/cover-image", status_code=204)
+def save_campaign_cover_image(campaign_id: str, req: SaveImageRequest):
+    """Save a generated image as the campaign cover."""
+    c = _campaigns().get(campaign_id)
+    if not c:
+        raise HTTPException(404, "Campaign not found")
+    _campaigns().update(campaign_id, cover_image=req.data_url)
+
+
+@router.patch("/{campaign_id}/player-character/portrait", status_code=204)
+def save_pc_portrait(campaign_id: str, req: SaveImageRequest):
+    """Save a generated or uploaded image as the player character portrait."""
+    pc = _pcs().get(campaign_id)
+    if not pc:
+        raise HTTPException(404, "Player character not found")
+    pc.portrait_image = req.data_url
+    _pcs().save(pc)
+
+
+@router.patch("/{campaign_id}/npcs/{npc_id}/portrait", status_code=204)
+def save_npc_portrait(campaign_id: str, npc_id: str, req: SaveImageRequest):
+    """Save a generated image as an NPC portrait."""
+    npc = _npcs().get(npc_id)
+    if not npc or npc.campaign_id != campaign_id:
+        raise HTTPException(404, "NPC not found")
+    from app.core.models import NpcDevEntry as _NDE  # noqa: avoid circular at module level
+    npc.portrait_image = req.data_url
+    _npcs().save(npc)
+
+
+@router.patch("/{campaign_id}/scenes/{scene_id}/scene-image", status_code=204)
+def save_scene_image(campaign_id: str, scene_id: str, req: SaveImageRequest):
+    """Save a generated image as the scene illustration."""
+    scene = _scenes().get(scene_id)
+    if not scene or scene.campaign_id != campaign_id:
+        raise HTTPException(404, "Scene not found")
+    scene.scene_image = req.data_url
+    _scenes().save(scene)
+
+
+# ── Image Prompt Generation ────────────────────────────────────────────────────
+
+_IMG_PROMPT_SYSTEM = (
+    "You are an expert Stable Diffusion prompt engineer.\n\n"
+    "Your task: write a vivid SD image generation prompt based on the provided context.\n\n"
+    "CRITICAL: Do NOT show any thinking, reasoning steps, planning, or explanation. "
+    "Output ONLY the final raw prompt text and nothing else.\n\n"
+    "Rules:\n"
+    "- Comma-separated descriptive tags and short phrases\n"
+    "- Lead with subject/composition (e.g. 'lone mage on a clifftop, stormy sky')\n"
+    "- Include physical descriptions of each character present: gender, apparent age, hair colour, clothing, expression, pose\n"
+    "  If gender or age are not explicitly stated, make a reasonable visual guess based on context\n"
+    "- ALWAYS specify the character's gender and apparent age (e.g. 'young woman', 'middle-aged man', 'elderly elf female')\n"
+    "- Include environment, lighting, mood, atmosphere\n"
+    "- Do NOT include style tags — the user will add those separately\n"
+    "- Do NOT include negative prompt syntax\n"
+    "- Under 160 words total\n"
+    "- Output ONLY the raw prompt text — no labels, no preamble, no explanation, no markdown"
+)
+
+
+class ImagePromptRequest(BaseModel):
+    source_type: str          # "campaign" | "scene" | "chat" | "npc"
+    scene_id: Optional[str] = None
+    npc_id: Optional[str] = None
+    model_name: Optional[str] = None
+    last_message: Optional[str] = None   # for "chat" type — the last AI response text
+
+
+@router.post("/{campaign_id}/image-prompt")
+def generate_image_prompt(campaign_id: str, req: ImagePromptRequest):
+    """Ask the LLM to produce a Stable Diffusion optimised prompt from campaign context."""
+    import json as _json
+    import httpx
+
+    c = _campaigns().get(campaign_id)
+    if not c:
+        raise HTTPException(404, "Campaign not found")
+
+    parts: list[str] = []
+
+    if req.source_type == "campaign":
+        facts = _facts().get_all(campaign_id)
+        world_text = "\n".join(f"- {f.content}" for f in facts[:10] if f.content)
+        pc = _pcs().get(campaign_id)
+        pc_text = (
+            f"{pc.name}: {pc.appearance}".strip()
+            if pc and pc.name and pc.appearance else
+            (pc.name if pc and pc.name else "")
+        )
+        sg = c.style_guide
+        parts = [
+            f"TYPE: Campaign cover image",
+            f"CAMPAIGN NAME: {c.name}",
+            f"WORLD DOCUMENT:\n{world_text}" if world_text else "",
+            f"PLAYER CHARACTER: {pc_text}" if pc_text else "",
+            f"TONE / THEMES: {sg.tone}" if sg and sg.tone else "",
+            "",
+            "Create a cinematic cover image prompt that captures the world's essence and atmosphere.",
+        ]
+
+    elif req.source_type == "scene":
+        if not req.scene_id:
+            raise HTTPException(400, "scene_id required for scene image")
+        scene = _scenes().get(req.scene_id)
+        if not scene:
+            raise HTTPException(404, "Scene not found")
+        npc_lines = []
+        for nid in (scene.npc_ids or []):
+            npc = _npcs().get(nid)
+            if npc:
+                meta = ", ".join(p for p in [npc.gender, npc.age] if p)
+                desc = f"{npc.name}"
+                if meta:
+                    desc += f" [{meta}]"
+                if npc.role:
+                    desc += f" ({npc.role})"
+                if npc.appearance:
+                    desc += f": {npc.appearance[:120]}"
+                npc_lines.append(desc)
+        pc = _pcs().get(campaign_id)
+        pc_text = (
+            f"{pc.name}: {pc.appearance[:120]}".strip()
+            if pc and pc.name and pc.appearance else
+            (pc.name if pc and pc.name else "")
+        )
+        summary = scene.confirmed_summary or scene.proposed_summary or ""
+        parts = [
+            "TYPE: Scene illustration",
+            f"LOCATION: {scene.location or 'unknown'}",
+            f"SCENE TITLE: {scene.title}" if scene.title else "",
+            f"SCENE SUMMARY: {summary[:400]}" if summary else "",
+            f"SCENE INTENT: {scene.intent[:200]}" if scene.intent else "",
+            f"TONE: {scene.tone}" if scene.tone else "",
+            "NPCs PRESENT:\n" + "\n".join(f"  - {n}" for n in npc_lines) if npc_lines else "",
+            f"PLAYER CHARACTER: {pc_text}" if pc_text else "",
+            "",
+            "Create an evocative scene illustration prompt that captures this moment in the story.",
+        ]
+
+    elif req.source_type == "chat":
+        if not req.last_message:
+            raise HTTPException(400, "last_message required for chat image")
+        scene = _scenes().get(req.scene_id) if req.scene_id else None
+        location = (scene.location if scene else None) or "unknown"
+        parts = [
+            "TYPE: In-story illustration",
+            f"LOCATION: {location}",
+            "",
+            "LAST NARRATIVE TEXT (verbatim):",
+            req.last_message[:600],
+            "",
+            "Create an illustration prompt for exactly this story moment — the characters, action, and atmosphere described above.",
+        ]
+
+    elif req.source_type == "pc":
+        pc = _pcs().get(campaign_id)
+        if not pc:
+            raise HTTPException(404, "Player character not found")
+        parts = [
+            "TYPE: Player character portrait",
+            f"NAME: {pc.name}",
+            f"APPEARANCE: {pc.appearance}" if pc.appearance else "",
+            f"PERSONALITY (for expression clues): {pc.personality[:200]}" if pc.personality else "",
+            f"BACKGROUND: {pc.background[:200]}" if pc.background else "",
+            f"WANTS: {pc.wants}" if pc.wants else "",
+            f"FEARS: {pc.fears}" if pc.fears else "",
+            "",
+            "Create a character portrait prompt for the player character. ALWAYS lead with gender and apparent age (infer from context if not stated). Emphasise face, expression, clothing, and distinctive visual traits.",
+        ]
+
+    elif req.source_type == "npc":
+        if not req.npc_id:
+            raise HTTPException(400, "npc_id required for character image")
+        npc = _npcs().get(req.npc_id)
+        if not npc:
+            raise HTTPException(404, "NPC not found")
+        parts = [
+            "TYPE: Character portrait",
+            f"NAME: {npc.name}",
+            f"GENDER: {npc.gender}" if npc.gender else "GENDER: unspecified — infer from name/context",
+            f"AGE: {npc.age}" if npc.age else "AGE: unspecified — make a reasonable visual guess",
+            f"ROLE: {npc.role}" if npc.role else "",
+            f"APPEARANCE: {npc.appearance}" if npc.appearance else "",
+            f"PERSONALITY (for expression clues): {npc.personality[:200]}" if npc.personality else "",
+            f"CURRENT STATE: {npc.current_state}" if npc.current_state else "",
+            "",
+            "Create a character portrait prompt. ALWAYS lead with the character's gender and apparent age. Emphasise face, expression, and distinctive visual traits.",
+        ]
+
+    else:
+        raise HTTPException(400, f"Unknown source_type: {req.source_type!r}")
+
+    context = "\n".join(p for p in parts if p)
+    model = req.model_name or (c.model_name if c.model_name else config.ollama_model)
+
+    try:
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": _IMG_PROMPT_SYSTEM},
+                {"role": "user", "content": context},
+            ],
+            "stream": False,
+            "think": False,   # Qwen3 / QwQ: suppress chain-of-thought output
+            "options": {"temperature": 0.75, "num_predict": 350},
+        }
+        resp = httpx.post(
+            f"{config.ollama_base_url.rstrip('/')}/api/chat",
+            json=payload,
+            timeout=120.0,
+        )
+        resp.raise_for_status()
+        import re as _re
+        raw = resp.json()
+        msg = raw.get("message", {})
+        content = (msg.get("content") or "").strip()
+        # Strip <think>…</think> blocks (DeepSeek-R1, Qwen3 with tags)
+        content = _re.sub(r"<think>.*?</think>", "", content, flags=_re.DOTALL).strip()
+        # Strip plain-text thinking preambles: paragraphs that start with
+        # "Thinking", numbered steps, or bullet reasoning before the actual prompt.
+        # The real SD prompt is comma-separated tags without markdown list markers.
+        # Strategy: take everything after the last blank line that follows a
+        # "step" / heading pattern, or just grab the last non-empty paragraph.
+        if _re.search(r"(?m)^(Thinking|#+\s|\d+\.\s+\*\*)", content):
+            # Split on double newlines and take the last non-empty block
+            blocks = [b.strip() for b in _re.split(r"\n{2,}", content) if b.strip()]
+            # Prefer the last block that looks like comma-separated tags (no list markers)
+            for block in reversed(blocks):
+                if not _re.match(r"^(\d+\.|\*|-|#)", block):
+                    content = block
+                    break
+        # Some thinking models leave content empty and put the answer in message.thinking
+        prompt_text = content or (msg.get("thinking") or "").strip()
+        if not prompt_text:
+            raise HTTPException(500,
+                "The model returned an empty response. "
+                "Try selecting a different model or ensure the model is fully loaded in Ollama.")
+        return {"prompt": prompt_text}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Prompt generation failed: {e}")
+
+
 # ── World Builder ──────────────────────────────────────────────────────────────
 
 @router.post("/world-builder/generate/stream")
@@ -1294,7 +1549,7 @@ def refine_world_stream(req: RefineWorldRequest):
 
     model = req.model_name or config.ollama_model
     current = _dict_to_world_build_result(req.current)
-    current_json = _json.dumps(current.model_dump(), indent=2, ensure_ascii=False)
+    current_json = _json.dumps(current.model_dump(mode="json"), indent=2, ensure_ascii=False)
 
     prompt = (
         f"Here is the current world document:\n\n"
@@ -1851,6 +2106,7 @@ def _campaign_dict(c) -> dict:
         "model_name": c.model_name,
         "style_guide": c.style_guide.model_dump(),
         "notes": c.notes,
+        "cover_image": c.cover_image,
         "created_at": c.created_at.isoformat(),
         "updated_at": c.updated_at.isoformat(),
     }
@@ -1870,6 +2126,7 @@ def _pc_dict(pc) -> dict:
         "fears": pc.fears,
         "how_seen": pc.how_seen,
         "dev_log": [{"scene_number": e.scene_number, "note": e.note} for e in (pc.dev_log or [])],
+        "portrait_image": pc.portrait_image,
         "created_at": pc.created_at.isoformat(),
         "updated_at": pc.updated_at.isoformat(),
     }
@@ -1906,6 +2163,8 @@ def _npc_dict(n) -> dict:
         "appearance": n.appearance,
         "personality": n.personality,
         "role": n.role,
+        "gender": n.gender,
+        "age": n.age,
         "relationship_to_player": n.relationship_to_player,
         "current_location": n.current_location,
         "current_state": n.current_state,
@@ -1916,6 +2175,7 @@ def _npc_dict(n) -> dict:
         "short_term_goal": n.short_term_goal,
         "long_term_goal": n.long_term_goal,
         "dev_log": [{"scene_number": e.scene_number, "note": e.note} for e in (n.dev_log or [])],
+        "portrait_image": n.portrait_image,
         "created_at": n.created_at.isoformat(),
         "updated_at": n.updated_at.isoformat(),
     }
@@ -1982,6 +2242,7 @@ def _scene_dict(s) -> dict:
         "confirmed_summary": s.confirmed_summary,
         "confirmed": s.confirmed,
         "allow_unselected_npcs": s.allow_unselected_npcs,
+        "scene_image": s.scene_image,
         "created_at": s.created_at.isoformat(),
         "updated_at": s.updated_at.isoformat(),
     }

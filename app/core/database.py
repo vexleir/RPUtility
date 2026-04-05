@@ -391,6 +391,32 @@ def _migrate(conn: sqlite3.Connection) -> None:
     except Exception:
         pass  # column already exists
 
+    # Image generation: cover/portrait/scene images stored as base64 data URLs
+    try:
+        conn.execute("ALTER TABLE campaigns ADD COLUMN cover_image TEXT")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE npc_cards ADD COLUMN portrait_image TEXT")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE campaign_scenes ADD COLUMN scene_image TEXT")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE player_characters ADD COLUMN portrait_image TEXT")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE npc_cards ADD COLUMN gender TEXT NOT NULL DEFAULT ''")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE npc_cards ADD COLUMN age TEXT NOT NULL DEFAULT ''")
+    except Exception:
+        pass
+
     # Character aliases: maps alternate names/titles to a canonical name
     conn.execute("""
         CREATE TABLE IF NOT EXISTS character_aliases (

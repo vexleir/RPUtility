@@ -30,6 +30,7 @@
       <button class="btn btn-ghost btn-sm" id="undo-btn" onclick="undoLastTurn()" title="Undo last exchange" style="display:none">↩ Undo</button>
       <button class="btn btn-ghost btn-sm" onclick="openModal('scene-context-modal')" title="Scene context">🗺</button>
       <button class="btn btn-ghost btn-sm" onclick="openSceneSearch()" title="Search this scene">🔍</button>
+      <button class="btn btn-ghost btn-sm" onclick="openSceneImgGen()" title="Generate scene image">🎨</button>
       <button class="btn btn-ghost btn-sm" onclick="openPromptPreview()" title="View AI system prompt">⚙ Prompt</button>
       <button class="btn btn-ghost btn-sm" onclick="openModal('gen-settings-modal')" title="Generation settings">⚙️</button>
       <button class="btn btn-sm btn-danger" id="end-scene-btn" onclick="openEndScene()" title="End this scene">■ End Scene</button>
@@ -88,6 +89,9 @@
   <!-- ── Chat body ──────────────────────────────────────────────────── -->
   <div class="chat-body" id="chat-body" style="display:none">
     <div class="messages-col">
+      <div id="scene-header-img-wrap" class="scene-header-img-wrap hidden">
+        <img id="scene-header-img" class="scene-header-img" alt="Scene image">
+      </div>
       <div class="messages-area" id="messages-area"></div>
 
       <!-- Input -->
@@ -102,6 +106,7 @@
             spellcheck="true"
           ></textarea>
           <button class="btn btn-primary send-btn" id="send-btn" onclick="sendMessage()">Send</button>
+          <button class="btn btn-ghost send-btn" id="imggen-chat-btn" onclick="openChatImgGen()" title="Generate image from last response" style="font-size:18px;padding:0 10px">🎨</button>
         </div>
       </div>
     </div>
@@ -306,7 +311,99 @@
     </div>
   </div>
 
+  <!-- ── Image Generation modal ───────────────────────────────────────── -->
+  <div id="imggen-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('imggen-modal')">
+    <div class="modal imggen-modal-inner">
+      <div class="modal-header">
+        <span id="imggen-title">Generate Image</span>
+        <button class="modal-close" onclick="closeModal('imggen-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted" id="imggen-source-hint" style="font-size:0.85rem;margin-bottom:12px"></p>
+
+        <div class="form-group">
+          <label>Image Prompt <span class="muted">(Stable Diffusion)</span></label>
+          <textarea id="imggen-prompt" rows="4" placeholder="Describe what you want to generate, or click ✨ Generate Prompt…" style="width:100%;box-sizing:border-box"></textarea>
+        </div>
+
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+          <button class="btn btn-sm" id="imggen-gen-prompt-btn" onclick="generateImgPrompt()">✨ Generate Prompt</button>
+          <select id="imggen-model-select" style="flex:1;min-width:120px">
+            <option value="">Default model</option>
+          </select>
+          <span class="muted" id="imggen-gen-status" style="font-size:0.82rem"></span>
+        </div>
+
+        <div class="form-group">
+          <label>Style Tags <span class="muted">(appended to prompt)</span></label>
+          <input type="text" id="imggen-style-tags" placeholder="e.g. oil painting, fantasy art, detailed, cinematic lighting">
+        </div>
+
+        <div class="form-group">
+          <label>Negative Prompt</label>
+          <input type="text" id="imggen-negative" value="lowres, bad anatomy, blurry, watermark, text">
+        </div>
+
+        <details id="imggen-comfy-details" style="margin-bottom:12px">
+          <summary style="cursor:pointer;font-size:0.85rem;color:var(--text-dim);user-select:none">⚙ ComfyUI Settings</summary>
+          <div style="padding-top:10px">
+            <div class="form-group">
+              <label>ComfyUI URL</label>
+              <input type="text" id="imggen-comfy-url" value="http://localhost:8188">
+            </div>
+            <div class="form-group">
+              <label>Checkpoint <span class="muted dim">(leave blank to auto-detect)</span></label>
+              <div style="display:flex;gap:6px">
+                <input type="text" id="imggen-checkpoint" placeholder="auto-detect" style="flex:1">
+                <button class="btn btn-sm" onclick="fetchImgGenCheckpoints()">List</button>
+              </div>
+              <div id="imggen-checkpoint-list" class="muted" style="font-size:0.8rem;margin-top:4px;line-height:1.8"></div>
+            </div>
+            <div class="wb-grid-2">
+              <div class="form-group"><label>Width</label><input type="number" id="imggen-width" value="512" min="256" max="2048" step="64"></div>
+              <div class="form-group"><label>Height</label><input type="number" id="imggen-height" value="768" min="256" max="2048" step="64"></div>
+            </div>
+            <div class="wb-grid-2">
+              <div class="form-group"><label>Steps</label><input type="number" id="imggen-steps" value="20" min="1" max="100"></div>
+              <div class="form-group"><label>CFG Scale</label><input type="number" id="imggen-cfg" value="7" min="1" max="30" step="0.5"></div>
+            </div>
+          </div>
+        </details>
+
+        <!-- Upload alternative -->
+        <div style="display:flex;align-items:center;gap:8px;margin:10px 0 8px">
+          <hr style="flex:1;border:none;border-top:1px solid var(--border)">
+          <span class="dim" style="font-size:0.82rem;white-space:nowrap">or upload an image</span>
+          <hr style="flex:1;border:none;border-top:1px solid var(--border)">
+        </div>
+        <div class="form-group" style="margin-bottom:12px">
+          <input type="file" id="imggen-upload" accept="image/*" onchange="uploadImgFile(this)" style="font-size:0.85rem;color:var(--text-muted)">
+        </div>
+
+        <!-- Result -->
+        <div id="imggen-result" class="imggen-result hidden">
+          <img id="imggen-result-img" class="imggen-result-img" alt="" title="Click to expand" onclick="this.classList.toggle('imggen-result-img-full')">
+          <div class="imggen-result-actions">
+            <button id="imggen-save-btn" class="btn btn-sm btn-primary" onclick="saveImgGen()">💾 Save</button>
+            <button class="btn btn-sm" onclick="submitImgGen()">↺ Regenerate</button>
+            <a id="imggen-download-btn" class="btn btn-sm" download="generated_image.png">⬇ Download</a>
+            <button id="imggen-insert-btn" class="btn btn-sm hidden" onclick="insertImgGenToChat()">Insert into Chat</button>
+            <button class="btn btn-sm" onclick="closeModal('imggen-modal')">✕ Discard</button>
+          </div>
+          <div class="muted" style="font-size:11px;margin-top:4px">Click image to expand · Generated by ComfyUI</div>
+        </div>
+
+      </div>
+      <div class="modal-footer">
+        <span class="muted" id="imggen-status" style="margin-right:auto;font-size:0.82rem"></span>
+        <button class="btn btn-primary" id="imggen-submit-btn" onclick="submitImgGen()">🎨 Generate Image</button>
+        <button class="btn" onclick="closeModal('imggen-modal')">Close</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/static/campaign_play.js?v={{CACHE_VER}}"></script>
+  <script src="/static/campaign_imggen.js?v={{CACHE_VER}}"></script>
   <script>const CAMPAIGN_ID = "{{CAMPAIGN_ID}}";</script>
 </body>
 </html>

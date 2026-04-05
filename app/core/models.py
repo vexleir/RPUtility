@@ -579,6 +579,7 @@ class Campaign(BaseModel):
     model_name: Optional[str] = None
     style_guide: StyleGuide = Field(default_factory=StyleGuide)
     notes: str = ""                    # player scratchpad — never sent to AI
+    cover_image: Optional[str] = None  # base64 data URL set via image generation
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -600,6 +601,7 @@ class PlayerCharacter(BaseModel):
     fears: str = ""
     how_seen: str = ""
     dev_log: list[PcDevEntry] = Field(default_factory=list)  # Phase 4
+    portrait_image: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -644,6 +646,8 @@ class NpcCard(BaseModel):
     appearance: str = ""
     personality: str = ""
     role: str = ""
+    gender: str = ""
+    age: str = ""
     relationship_to_player: str = ""
     current_location: str = ""
     current_state: str = ""
@@ -654,6 +658,7 @@ class NpcCard(BaseModel):
     short_term_goal: str = ""        # immediate motivation
     long_term_goal: str = ""         # deeper ambition
     dev_log: list[NpcDevEntry] = Field(default_factory=list)
+    portrait_image: Optional[str] = None   # base64 data URL set via image generation
     # Legacy compat — computed from status
     @property
     def is_alive(self) -> bool:
@@ -712,6 +717,7 @@ class CampaignScene(BaseModel):
     confirmed_summary: str = ""
     confirmed: bool = False
     allow_unselected_npcs: bool = False   # AI may incorporate world NPCs not added to scene
+    scene_image: Optional[str] = None     # base64 data URL set via image generation
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 

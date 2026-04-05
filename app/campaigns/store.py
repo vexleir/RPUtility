@@ -74,10 +74,10 @@ class CampaignStore:
         c.updated_at = _now()
         with get_connection(self._db) as conn:
             conn.execute(
-                "UPDATE campaigns SET name=?,model_name=?,style_guide=?,notes=?,updated_at=? WHERE id=?",
+                "UPDATE campaigns SET name=?,model_name=?,style_guide=?,notes=?,cover_image=?,updated_at=? WHERE id=?",
                 (c.name, c.model_name,
                  json_encode(c.style_guide.model_dump()),
-                 c.notes,
+                 c.notes, c.cover_image,
                  c.updated_at.isoformat(), c.id),
             )
         return c
@@ -97,6 +97,7 @@ def _row_to_campaign(row) -> Campaign:
         model_name=row["model_name"],
         style_guide=StyleGuide(**sg_raw) if sg_raw else StyleGuide(),
         notes=row["notes"] if "notes" in keys else "",
+        cover_image=row["cover_image"] if "cover_image" in keys else None,
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )
@@ -113,17 +114,19 @@ class PlayerCharacterStore:
             conn.execute("""
                 INSERT INTO player_characters
                     (id,campaign_id,name,appearance,personality,background,
-                     wants,fears,how_seen,dev_log,created_at,updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                     wants,fears,how_seen,dev_log,portrait_image,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(id) DO UPDATE SET
                     name=excluded.name, appearance=excluded.appearance,
                     personality=excluded.personality, background=excluded.background,
                     wants=excluded.wants, fears=excluded.fears,
                     how_seen=excluded.how_seen, dev_log=excluded.dev_log,
+                    portrait_image=excluded.portrait_image,
                     updated_at=excluded.updated_at
             """, (pc.id, pc.campaign_id, pc.name, pc.appearance, pc.personality,
                   pc.background, pc.wants, pc.fears, pc.how_seen,
                   json_encode([e.model_dump() for e in pc.dev_log]),
+                  pc.portrait_image,
                   pc.created_at.isoformat(), pc.updated_at.isoformat()))
 
     def get(self, campaign_id: str) -> PlayerCharacter | None:
@@ -148,6 +151,7 @@ def _row_to_pc(row) -> PlayerCharacter:
         personality=row["personality"], background=row["background"],
         wants=row["wants"], fears=row["fears"], how_seen=row["how_seen"],
         dev_log=dev_log,
+        portrait_image=row["portrait_image"] if "portrait_image" in keys else None,
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )
@@ -298,14 +302,16 @@ class NpcCardStore:
             conn.execute("""
                 INSERT INTO npc_cards
                     (id,campaign_id,name,appearance,personality,role,
+                     gender,age,
                      relationship_to_player,current_location,current_state,
                      is_alive,status,status_reason,secrets,
-                     short_term_goal,long_term_goal,dev_log,
+                     short_term_goal,long_term_goal,dev_log,portrait_image,
                      created_at,updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(id) DO UPDATE SET
                     name=excluded.name, appearance=excluded.appearance,
                     personality=excluded.personality, role=excluded.role,
+                    gender=excluded.gender, age=excluded.age,
                     relationship_to_player=excluded.relationship_to_player,
                     current_location=excluded.current_location,
                     current_state=excluded.current_state,
@@ -315,13 +321,16 @@ class NpcCardStore:
                     short_term_goal=excluded.short_term_goal,
                     long_term_goal=excluded.long_term_goal,
                     dev_log=excluded.dev_log,
+                    portrait_image=excluded.portrait_image,
                     updated_at=excluded.updated_at
             """, (npc.id, npc.campaign_id, npc.name, npc.appearance, npc.personality,
-                  npc.role, npc.relationship_to_player, npc.current_location,
+                  npc.role, npc.gender, npc.age,
+                  npc.relationship_to_player, npc.current_location,
                   npc.current_state, int(npc.status != NpcStatus.DEAD),
                   npc.status.value, npc.status_reason, npc.secrets,
                   npc.short_term_goal, npc.long_term_goal,
                   json_encode([e.model_dump() for e in npc.dev_log]),
+                  npc.portrait_image,
                   npc.created_at.isoformat(), npc.updated_at.isoformat()))
 
     def get(self, npc_id: str) -> NpcCard | None:
@@ -371,11 +380,14 @@ def _row_to_npc(row) -> NpcCard:
         role=row["role"], relationship_to_player=row["relationship_to_player"],
         current_location=row["current_location"], current_state=row["current_state"],
         status=status,
+        gender=row["gender"] if "gender" in keys else "",
+        age=row["age"] if "age" in keys else "",
         status_reason=row["status_reason"] if "status_reason" in keys else "",
         secrets=row["secrets"] if "secrets" in keys else "",
         short_term_goal=row["short_term_goal"] if "short_term_goal" in keys else "",
         long_term_goal=row["long_term_goal"] if "long_term_goal" in keys else "",
         dev_log=dev_log,
+        portrait_image=row["portrait_image"] if "portrait_image" in keys else None,
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )
@@ -455,8 +467,8 @@ class SceneStore:
                 INSERT INTO campaign_scenes
                     (id,campaign_id,scene_number,title,location,npc_ids,intent,tone,
                      turns,proposed_summary,confirmed_summary,confirmed,
-                     allow_unselected_npcs,created_at,updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     allow_unselected_npcs,scene_image,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(id) DO UPDATE SET
                     title=excluded.title, location=excluded.location,
                     npc_ids=excluded.npc_ids, intent=excluded.intent, tone=excluded.tone,
@@ -464,6 +476,7 @@ class SceneStore:
                     confirmed_summary=excluded.confirmed_summary,
                     confirmed=excluded.confirmed,
                     allow_unselected_npcs=excluded.allow_unselected_npcs,
+                    scene_image=excluded.scene_image,
                     updated_at=excluded.updated_at
             """, (
                 scene.id, scene.campaign_id, scene.scene_number, scene.title,
@@ -473,6 +486,7 @@ class SceneStore:
                 scene.proposed_summary, scene.confirmed_summary,
                 int(scene.confirmed),
                 int(scene.allow_unselected_npcs),
+                scene.scene_image,
                 scene.created_at.isoformat(), scene.updated_at.isoformat(),
             ))
 
@@ -539,6 +553,7 @@ def _row_to_scene(row) -> CampaignScene:
         confirmed_summary=row["confirmed_summary"],
         confirmed=bool(row["confirmed"]),
         allow_unselected_npcs=bool(row["allow_unselected_npcs"]) if "allow_unselected_npcs" in row.keys() else False,
+        scene_image=row["scene_image"] if "scene_image" in row.keys() else None,
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )
