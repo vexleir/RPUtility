@@ -298,6 +298,17 @@ async function loadModels() {
   }
 }
 
+// ── Legacy section toggle ─────────────────────────────────────────────────────
+function toggleLegacy() {
+  const body = document.getElementById("legacy-body");
+  const toggle = document.getElementById("legacy-toggle");
+  const isOpen = !body.classList.contains("hidden");
+  body.classList.toggle("hidden", isOpen);
+  toggle.textContent = isOpen
+    ? "Single-session mode (legacy) →"
+    : "Single-session mode (legacy) ▾";
+}
+
 // ── Tab switching ─────────────────────────────────────────────────────────────
 function switchTab(name) {
   $$(".tab-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === name));

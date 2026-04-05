@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>RP Utility — Chat</title>
+  <script src="/static/theme.js?v={{CACHE_VER}}"></script>
   <link rel="stylesheet" href="/static/style.css?v={{CACHE_VER}}">
   <script>window.__SESSION_ID__ = "{{SESSION_ID}}";</script>
   <!-- marked.js for markdown rendering in AI messages -->
@@ -32,6 +33,7 @@
       <button class="btn btn-ghost btn-sm" onclick="openModal('persona-modal')" title="Player persona">👤</button>
       <button class="btn btn-ghost btn-sm" onclick="openModal('gen-settings-modal')" title="Generation settings">⚙️</button>
       <button class="btn btn-ghost btn-sm" onclick="openModal('skill-check-modal')" title="Roll a skill check">🎲</button>
+      <select id="theme-select" class="theme-select" onchange="setTheme(this.value)" title="Color theme"></select>
       <button class="btn btn-ghost btn-sm" onclick="openModal('bg-modal')" title="Chat background">🖼</button>
       <a href="/chat/{{SESSION_ID}}/recap" class="btn btn-ghost btn-sm" title="Story recap for returning players">📖 Recap</a>
       <a href="/api/session/{{SESSION_ID}}/export" class="btn btn-ghost btn-sm" title="Export session as markdown" download>⬇</a>

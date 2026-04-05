@@ -61,6 +61,284 @@ async function checkStatus() {
   } catch {/* ignore */}
 }
 
+// ── Create mode switcher ──────────────────────────────────────────────────────
+
+function switchCreateMode(mode) {
+  document.getElementById("mode-describe").classList.toggle("hidden", mode !== "describe");
+  document.getElementById("mode-cards").classList.toggle("hidden", mode !== "cards");
+  document.querySelectorAll("#step-describe .tab-btn").forEach((btn, i) => {
+    btn.classList.toggle("active", (i === 0) === (mode === "describe"));
+  });
+}
+
+// ── Card/Lorebook Import ──────────────────────────────────────────────────────
+
+let _importedCards = [];
+let _importedLoreEntries = [];
+
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("card-import-files")?.addEventListener("change", function () {
+    _importedCards = [];
+    document.getElementById("card-import-preview").innerHTML = "";
+    Array.from(this.files).forEach(f => parseCardFile(f));
+  });
+  document.getElementById("lorebook-import-files")?.addEventListener("change", function () {
+    _importedLoreEntries = [];
+    document.getElementById("lorebook-import-preview").innerHTML = "";
+    Array.from(this.files).forEach(f => parseLorebookFile(f));
+  });
+});
+
+function parseCardFile(file) {
+  const isPng = /\.png$/i.test(file.name) || file.type === "image/png";
+  if (isPng) {
+    _parsePngCardFile(file);
+  } else {
+    _parseJsonCardFile(file);
+  }
+}
+
+function _parseJsonCardFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      // Support both top-level and SillyTavern wrapped format
+      const card = data.data || data;
+      const name = card.name || card.char_name || file.name.replace(/\.json$/i, "");
+      _importedCards.push({
+        name,
+        description:   card.description   || "",
+        personality:   card.personality   || "",
+        scenario:      card.scenario      || "",
+        creator_notes: card.creator_notes || "",
+      });
+      _updateImportInfo();
+      const chip = document.createElement("div");
+      chip.className = "badge";
+      chip.textContent = `👤 ${name}`;
+      document.getElementById("card-import-preview").appendChild(chip);
+    } catch {
+      showBanner(`Could not parse ${file.name} as JSON.`, "warning");
+    }
+  };
+  reader.readAsText(file);
+}
+
+function _parsePngCardFile(file) {
+  let portraitDataUrl = null;
+  let cardData = null;  // null = not yet loaded; false = failed/not found
+
+  function _tryFinish() {
+    if (portraitDataUrl === null || cardData === null) return; // still loading
+    if (cardData === false) {
+      showBanner(`${file.name}: no character data found in PNG.`, "warning");
+      return;
+    }
+    const name = cardData.name || cardData.char_name || file.name.replace(/\.png$/i, "");
+    _importedCards.push({
+      name,
+      description:   cardData.description   || "",
+      personality:   cardData.personality   || "",
+      scenario:      cardData.scenario      || "",
+      creator_notes: cardData.creator_notes || "",
+      portrait_data_url: portraitDataUrl,
+    });
+    _updateImportInfo();
+    const chip = document.createElement("div");
+    chip.className = "badge";
+    chip.style.cssText = "display:flex;align-items:center;gap:6px";
+    chip.innerHTML = `<img src="${portraitDataUrl}" style="width:24px;height:24px;object-fit:cover;border-radius:3px"> 👤 ${escHtml(name)}`;
+    document.getElementById("card-import-preview").appendChild(chip);
+  }
+
+  // Read as data URL for portrait storage
+  const urlReader = new FileReader();
+  urlReader.onload = e => {
+    portraitDataUrl = e.target.result;
+    _tryFinish();
+  };
+
+  // Read as ArrayBuffer to parse PNG tEXt chunk
+  const bufReader = new FileReader();
+  bufReader.onload = e => {
+    const parsed = _parsePngChara(e.target.result);
+    cardData = parsed || false;
+    _tryFinish();
+  };
+
+  urlReader.readAsDataURL(file);
+  bufReader.readAsArrayBuffer(file);
+}
+
+/**
+ * Parse a PNG file's tEXt chunks looking for the SillyTavern "chara" keyword.
+ * Returns the parsed card JSON (unwrapping .data if present), or null.
+ */
+function _parsePngChara(arrayBuffer) {
+  try {
+    const view = new DataView(arrayBuffer);
+    // Verify PNG signature: 0x89 50 4E 47 0D 0A 1A 0A
+    if (view.getUint32(0) !== 0x89504E47) return null;
+    let offset = 8;
+    while (offset + 12 <= view.byteLength) {
+      const length = view.getUint32(offset);
+      const type = String.fromCharCode(
+        view.getUint8(offset + 4),
+        view.getUint8(offset + 5),
+        view.getUint8(offset + 6),
+        view.getUint8(offset + 7)
+      );
+      if (type === "tEXt" && length > 0) {
+        const data = new Uint8Array(arrayBuffer, offset + 8, length);
+        // Find null byte separating keyword from value
+        let sep = -1;
+        for (let i = 0; i < data.length; i++) {
+          if (data[i] === 0) { sep = i; break; }
+        }
+        if (sep !== -1) {
+          const keyword = new TextDecoder().decode(data.slice(0, sep));
+          if (keyword === "chara") {
+            // Value is base64-encoded JSON; decode using latin1 to handle raw bytes
+            const b64 = new TextDecoder("latin1").decode(data.slice(sep + 1));
+            try {
+              const json = JSON.parse(atob(b64));
+              return json.data || json; // unwrap SillyTavern v2 wrapper if present
+            } catch { return null; }
+          }
+        }
+      }
+      offset += 12 + length;
+      if (type === "IEND") break;
+    }
+  } catch { /* ignore malformed PNG */ }
+  return null;
+}
+
+function parseLorebookFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      // Support {entries: [...]} and {entries: {0: {...}, 1: {...}}} formats
+      let entries = data.entries || data.items || [];
+      if (!Array.isArray(entries)) entries = Object.values(entries);
+      entries.forEach(entry => {
+        const keys = entry.keys || entry.key || [];
+        const content = entry.content || entry.text || "";
+        if (content) _importedLoreEntries.push({ keys: Array.isArray(keys) ? keys : [keys], content });
+      });
+      _updateImportInfo();
+      const chip = document.createElement("div");
+      chip.className = "badge";
+      chip.textContent = `📖 ${file.name.replace(/\.json$/i, "")} (${entries.length} entries)`;
+      document.getElementById("lorebook-import-preview").appendChild(chip);
+    } catch {
+      showBanner(`Could not parse ${file.name} as JSON.`, "warning");
+    }
+  };
+  reader.readAsText(file);
+}
+
+function _updateImportInfo() {
+  const el = document.getElementById("cards-import-info");
+  if (el) el.textContent =
+    `${_importedCards.length} character card(s) · ${_importedLoreEntries.length} lorebook entr${_importedLoreEntries.length === 1 ? "y" : "ies"} loaded`;
+}
+
+async function generateFromCards() {
+  if (!_importedCards.length) {
+    showBanner("Please import at least one character card.", "warning");
+    return;
+  }
+  const modelName = document.getElementById("model-select").value;
+  const extra     = document.getElementById("cards-extra-details").value.trim();
+
+  document.getElementById("step-describe").classList.add("hidden");
+  document.getElementById("step-stream").classList.remove("hidden");
+  document.getElementById("stream-output-heading").textContent = "Synthesising World from Cards…";
+
+  const outputEl  = document.getElementById("stream-output");
+  const countEl   = document.getElementById("stream-char-count");
+  const doneMsgEl = document.getElementById("stream-done-msg");
+
+  // Full reset of stream view state
+  outputEl.textContent = "";
+  countEl.textContent  = "";
+  countEl.style.color  = "";
+  doneMsgEl.classList.add("hidden");
+  doneMsgEl.style.color = "";
+  doneMsgEl.innerHTML   = "✓ Generation complete — loading review…";
+
+  try {
+    const res = await fetch("/api/campaigns/world-builder/from-cards/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        cards: _importedCards,
+        lorebook_entries: _importedLoreEntries,
+        additional_details: extra,
+        model_name: modelName || null,
+      }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(text || `HTTP ${res.status}`);
+    }
+
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let fullText  = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value, { stream: true });
+      fullText += chunk;
+      outputEl.textContent = fullText;
+      countEl.textContent  = `${fullText.length} chars`;
+    }
+
+    // Check for server-side error signal anywhere in the stream
+    const errMatch = fullText.match(/\n\n\[ERROR:\s*([\s\S]*?)\]$/);
+    if (errMatch) throw new Error(errMatch[1].trim());
+
+    const data = _extractJson(fullText);
+    if (!data) {
+      // Leave the raw output visible so the user can see what went wrong
+      countEl.textContent = `${fullText.length} chars — parse failed`;
+      countEl.style.color = "var(--red)";
+      doneMsgEl.innerHTML =
+        '⚠ Could not parse output as JSON — the model may have cut off early or returned unexpected text. ' +
+        'Scroll up to inspect the output. ' +
+        '<button class="btn btn-sm" style="margin-left:8px" onclick="retryFromCards()">↺ Try Again</button>';
+      doneMsgEl.style.color = "var(--yellow)";
+      doneMsgEl.classList.remove("hidden");
+      return;
+    }
+
+    _world = data;
+    doneMsgEl.classList.remove("hidden");
+    await new Promise(r => setTimeout(r, 800));
+    document.getElementById("step-stream").classList.add("hidden");
+    document.getElementById("step-review").classList.remove("hidden");
+    populateAllSections();
+    showSection("premise");
+  } catch (e) {
+    doneMsgEl.innerHTML =
+      `⚠ Synthesis failed: ${escHtml(e.message)} ` +
+      '<button class="btn btn-sm" style="margin-left:8px" onclick="retryFromCards()">↺ Try Again</button>';
+    doneMsgEl.style.color = "var(--red)";
+    doneMsgEl.classList.remove("hidden");
+  }
+}
+
+function retryFromCards() {
+  document.getElementById("step-stream").classList.add("hidden");
+  document.getElementById("step-describe").classList.remove("hidden");
+  switchCreateMode("cards");
+}
+
 // ── World Generation ──────────────────────────────────────────────────────────
 
 async function generateWorld() {
@@ -75,11 +353,17 @@ async function generateWorld() {
   // Switch to the streaming panel so the user can read along
   document.getElementById("step-describe").classList.add("hidden");
   document.getElementById("step-stream").classList.remove("hidden");
+  document.getElementById("stream-output-heading").textContent = "Generating World…";
+
   const outputEl   = document.getElementById("stream-output");
   const countEl    = document.getElementById("stream-char-count");
   const doneMsgEl  = document.getElementById("stream-done-msg");
   outputEl.textContent = "";
+  countEl.textContent  = "";
+  countEl.style.color  = "";
   doneMsgEl.classList.add("hidden");
+  doneMsgEl.style.color = "";
+  doneMsgEl.innerHTML   = "✓ Generation complete — loading review…";
 
   try {
     const res = await fetch("/api/campaigns/world-builder/generate/stream", {
@@ -135,21 +419,31 @@ async function generateWorld() {
     document.getElementById("step-stream").classList.add("hidden");
     showReviewStep();
   } catch (e) {
-    document.getElementById("step-stream").classList.add("hidden");
-    document.getElementById("step-describe").classList.remove("hidden");
-    showBanner(`Generation failed: ${e.message}`, "error");
+    doneMsgEl.innerHTML =
+      `⚠ Generation failed: ${escHtml(e.message)} ` +
+      '<button class="btn btn-sm" style="margin-left:8px" onclick="retryGenerate()">↺ Try Again</button>';
+    doneMsgEl.style.color = "var(--red)";
+    doneMsgEl.classList.remove("hidden");
   }
 }
 
 function retryGenerate() {
   document.getElementById("step-stream").classList.add("hidden");
   document.getElementById("step-describe").classList.remove("hidden");
+  switchCreateMode("describe");
 }
 
 /** Extract the first JSON object from raw LLM output (mirrors Python _extract_json). */
 function _extractJson(text) {
+  // Strip <think>...</think> blocks from reasoning models (Qwen3, DeepSeek-R1, etc.)
+  let cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, "");
+  // Strip plain-text preamble heuristic (e.g. "Thinking Process: ...")
+  const preambleMatch = cleaned.match(/^[^\{]*?(?=\{)/s);
+  if (preambleMatch && preambleMatch[0].includes("\n")) {
+    cleaned = cleaned.slice(preambleMatch[0].length);
+  }
   // Strip markdown fences
-  let cleaned = text.replace(/```json\s*/g, "").replace(/```/g, "");
+  cleaned = cleaned.replace(/```json\s*/g, "").replace(/```/g, "");
   // Find outermost { ... }
   const start = cleaned.indexOf("{");
   const end   = cleaned.lastIndexOf("}");
@@ -564,12 +858,40 @@ async function confirmWorld() {
       throw new Error(detail || `HTTP ${res.status}`);
     }
     const data = await res.json();
+
+    // Patch portraits for any PNG character cards
+    const cardsWithPortraits = _importedCards.filter(c => c.portrait_data_url);
+    if (cardsWithPortraits.length) {
+      showLoading("Saving portraits…", "Associating card images with NPCs.");
+      await _patchNpcPortraits(data.campaign_id, cardsWithPortraits);
+    }
+
     hideLoading();
     window.location.href = `/campaigns/${data.campaign_id}`;
   } catch (e) {
     hideLoading();
     showBanner(`Could not create campaign: ${e.message}`, "error");
   }
+}
+
+async function _patchNpcPortraits(campaignId, cards) {
+  try {
+    const res = await fetch(`/api/campaigns/${campaignId}/npcs`);
+    if (!res.ok) return;
+    const npcs = await res.json();
+    const npcByName = {};
+    npcs.forEach(n => { npcByName[n.name.toLowerCase()] = n; });
+    for (const card of cards) {
+      const npc = npcByName[card.name.toLowerCase()];
+      if (npc) {
+        await fetch(`/api/campaigns/${campaignId}/npcs/${npc.id}/portrait`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ data_url: card.portrait_data_url }),
+        });
+      }
+    }
+  } catch { /* non-fatal — portraits can be set manually */ }
 }
 
 // ── UI helpers ────────────────────────────────────────────────────────────────

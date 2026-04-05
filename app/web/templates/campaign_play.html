@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Scene — RP Utility</title>
+  <script src="/static/theme.js?v={{CACHE_VER}}"></script>
   <link rel="stylesheet" href="/static/style.css?v={{CACHE_VER}}">
   <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
   <style>
@@ -33,6 +34,8 @@
       <button class="btn btn-ghost btn-sm" onclick="openSceneImgGen()" title="Generate scene image">🎨</button>
       <button class="btn btn-ghost btn-sm" onclick="openPromptPreview()" title="View AI system prompt">⚙ Prompt</button>
       <button class="btn btn-ghost btn-sm" onclick="openModal('gen-settings-modal')" title="Generation settings">⚙️</button>
+      <select id="theme-select" class="theme-select" onchange="setTheme(this.value)" title="Color theme" style="margin-right:4px"></select>
+      <button class="btn btn-sm btn-danger" id="delete-scene-btn" onclick="deleteScene()" title="Delete this scene (cannot be undone)" style="display:none">🗑 Delete Scene</button>
       <button class="btn btn-sm btn-danger" id="end-scene-btn" onclick="openEndScene()" title="End this scene">■ End Scene</button>
     </div>
   </header>
@@ -107,6 +110,9 @@
           ></textarea>
           <button class="btn btn-primary send-btn" id="send-btn" onclick="sendMessage()">Send</button>
           <button class="btn btn-ghost send-btn" id="imggen-chat-btn" onclick="openChatImgGen()" title="Generate image from last response" style="font-size:18px;padding:0 10px">🎨</button>
+        </div>
+        <div class="input-secondary-row">
+          <button class="btn btn-ghost btn-sm" id="continue-btn" onclick="continueStory()" title="Prompt the AI to continue the story">▶ Continue</button>
         </div>
       </div>
     </div>
@@ -224,23 +230,53 @@
 
   <!-- ── Generation settings modal ────────────────────────────────── -->
   <div id="gen-settings-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('gen-settings-modal')">
-    <div class="modal" style="max-width:440px">
+    <div class="modal" style="max-width:460px;max-height:90vh;display:flex;flex-direction:column">
       <div class="modal-header">
         <span>Generation Settings</span>
         <button class="modal-close" onclick="closeModal('gen-settings-modal')">✕</button>
       </div>
-      <div class="modal-body">
-        <div class="form-group">
-          <label>Temperature <span class="muted" id="temp-display">0.8</span></label>
-          <input type="range" id="gs-temperature" min="0" max="2" step="0.05" value="0.8"
-            oninput="document.getElementById('temp-display').textContent=this.value">
+      <div class="modal-body" style="overflow-y:auto;flex:1">
+        <p class="form-hint" style="margin-bottom:12px">Overrides campaign defaults for this session. Resets to campaign defaults on page reload.</p>
+        <div class="gen-setting-row">
+          <div class="gen-setting-label"><span>Temperature</span><span class="gen-setting-value" id="gs-lbl-temperature">0.80</span></div>
+          <input type="range" id="gs-temperature" min="0" max="2" step="0.05" value="0.80" oninput="gsSync('temperature',this.value,2)">
+          <div class="gen-setting-bounds"><span>0</span><span>2</span></div>
+          <p class="form-hint">Controls randomness.</p>
         </div>
-        <div class="form-group">
-          <label>Max Tokens</label>
-          <input type="number" id="gs-max-tokens" value="1024" min="64" max="4096" step="64">
+        <div class="gen-setting-row">
+          <div class="gen-setting-label"><span>Top-P</span><span class="gen-setting-value" id="gs-lbl-top_p">0.95</span></div>
+          <input type="range" id="gs-top_p" min="0" max="1" step="0.01" value="0.95" oninput="gsSync('top_p',this.value,2)">
+          <div class="gen-setting-bounds"><span>0</span><span>1</span></div>
+        </div>
+        <div class="gen-setting-row">
+          <div class="gen-setting-label"><span>Top-K</span><span class="gen-setting-value" id="gs-lbl-top_k">0</span></div>
+          <input type="range" id="gs-top_k" min="0" max="200" step="1" value="0" oninput="gsSync('top_k',this.value,0)">
+          <div class="gen-setting-bounds"><span>0 (off)</span><span>200</span></div>
+        </div>
+        <div class="gen-setting-row">
+          <div class="gen-setting-label"><span>Min-P</span><span class="gen-setting-value" id="gs-lbl-min_p">0.05</span></div>
+          <input type="range" id="gs-min_p" min="0" max="1" step="0.01" value="0.05" oninput="gsSync('min_p',this.value,2)">
+          <div class="gen-setting-bounds"><span>0 (off)</span><span>1</span></div>
+        </div>
+        <div class="gen-setting-row">
+          <div class="gen-setting-label"><span>Repeat Penalty</span><span class="gen-setting-value" id="gs-lbl-repeat_penalty">1.10</span></div>
+          <input type="range" id="gs-repeat_penalty" min="1" max="1.5" step="0.01" value="1.10" oninput="gsSync('repeat_penalty',this.value,2)">
+          <div class="gen-setting-bounds"><span>1 (off)</span><span>1.5</span></div>
+        </div>
+        <div class="gen-setting-row">
+          <div class="gen-setting-label"><span>Max Tokens</span><span class="gen-setting-value" id="gs-lbl-max_tokens">1024</span></div>
+          <input type="range" id="gs-max_tokens" min="64" max="8192" step="64" value="1024" oninput="gsSync('max_tokens',this.value,0)">
+          <div class="gen-setting-bounds"><span>64</span><span>8192</span></div>
+          <p class="form-hint">Max tokens per AI response.</p>
+        </div>
+        <div class="gen-setting-row">
+          <div class="gen-setting-label"><span>Seed</span><span class="gen-setting-value" id="gs-lbl-seed">-1</span></div>
+          <input type="range" id="gs-seed" min="-1" max="999999999" step="1" value="-1" oninput="gsSync('seed',this.value,0)">
+          <div class="gen-setting-bounds"><span>-1 (random)</span><span>999 999 999</span></div>
         </div>
       </div>
       <div class="modal-footer">
+        <button class="btn btn-sm btn-ghost" onclick="gsResetDefaults()">Reset to Campaign Defaults</button>
         <button class="btn btn-primary" onclick="closeModal('gen-settings-modal')">Done</button>
       </div>
     </div>
@@ -400,6 +436,12 @@
         <button class="btn" onclick="closeModal('imggen-modal')">Close</button>
       </div>
     </div>
+  </div>
+
+  <!-- ── Portrait lightbox ─────────────────────────────────────────── -->
+  <div id="portrait-lightbox" class="portrait-lightbox hidden" onclick="document.getElementById('portrait-lightbox').classList.add('hidden')">
+    <img id="portrait-lightbox-img" class="portrait-lightbox-img" alt="">
+    <div class="portrait-lightbox-hint muted">Click anywhere to close</div>
   </div>
 
   <script src="/static/campaign_play.js?v={{CACHE_VER}}"></script>

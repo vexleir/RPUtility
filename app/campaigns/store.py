@@ -10,7 +10,7 @@ from datetime import datetime, UTC
 
 from app.core.database import get_connection, json_encode, json_decode
 from app.core.models import (
-    Campaign, StyleGuide,
+    Campaign, StyleGuide, GenSettings,
     PlayerCharacter, PcDevEntry,
     CampaignWorldFact,
     CampaignPlace,
@@ -41,10 +41,11 @@ class CampaignStore:
                      created_at=now, updated_at=now)
         with get_connection(self._db) as conn:
             conn.execute(
-                "INSERT INTO campaigns (id,name,model_name,style_guide,notes,created_at,updated_at) "
-                "VALUES (?,?,?,?,?,?,?)",
+                "INSERT INTO campaigns (id,name,model_name,style_guide,gen_settings,notes,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
                 (c.id, c.name, c.model_name,
                  json_encode(sg.model_dump()),
+                 json_encode(c.gen_settings.model_dump()),
                  c.notes,
                  c.created_at.isoformat(), c.updated_at.isoformat()),
             )
@@ -74,9 +75,10 @@ class CampaignStore:
         c.updated_at = _now()
         with get_connection(self._db) as conn:
             conn.execute(
-                "UPDATE campaigns SET name=?,model_name=?,style_guide=?,notes=?,cover_image=?,updated_at=? WHERE id=?",
+                "UPDATE campaigns SET name=?,model_name=?,style_guide=?,gen_settings=?,notes=?,cover_image=?,updated_at=? WHERE id=?",
                 (c.name, c.model_name,
                  json_encode(c.style_guide.model_dump()),
+                 json_encode(c.gen_settings.model_dump()),
                  c.notes, c.cover_image,
                  c.updated_at.isoformat(), c.id),
             )
@@ -91,11 +93,13 @@ class CampaignStore:
 def _row_to_campaign(row) -> Campaign:
     sg_raw = json_decode(row["style_guide"]) if row["style_guide"] else {}
     keys = row.keys() if hasattr(row, "keys") else []
+    gs_raw = json_decode(row["gen_settings"]) if "gen_settings" in keys and row["gen_settings"] else {}
     return Campaign(
         id=row["id"],
         name=row["name"],
         model_name=row["model_name"],
         style_guide=StyleGuide(**sg_raw) if sg_raw else StyleGuide(),
+        gen_settings=GenSettings(**{k: v for k, v in gs_raw.items() if k in GenSettings.model_fields}) if gs_raw else GenSettings(),
         notes=row["notes"] if "notes" in keys else "",
         cover_image=row["cover_image"] if "cover_image" in keys else None,
         created_at=datetime.fromisoformat(row["created_at"]),

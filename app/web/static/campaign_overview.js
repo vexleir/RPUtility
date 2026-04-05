@@ -611,6 +611,10 @@ function renderNpcList() {
     div.querySelector('[data-action="edit"]').addEventListener("click", () => openEditNpc(npc));
     div.querySelector('[data-action="img"]').addEventListener("click", () =>
       openImgGen("npc", { npcId: npc.id, npcName: npc.name }));
+    const avatarImg = div.querySelector("[data-npc-avatar]");
+    if (avatarImg && npc.portrait_image) {
+      avatarImg.addEventListener("click", () => openPortraitLightbox(npc.portrait_image, npc.name));
+    }
     container.appendChild(div);
   });
 }
@@ -647,24 +651,29 @@ function renderRelationshipsList() {
 
 // ── NPC editor ────────────────────────────────────────────────────────────────
 
-function openEditNpc(npc) {
-  document.getElementById("npc-modal-title").textContent = npc ? "Edit NPC" : "New NPC";
+// prefill: optional data to pre-populate fields (from card import)
+// portrait: optional data URL to set as portrait after save
+function openEditNpc(npc, prefill, portrait) {
+  const data = prefill || npc || {};
+  document.getElementById("npc-modal-title").textContent = npc ? "Edit NPC" : (prefill ? "Import NPC" : "New NPC");
   document.getElementById("npc-id").value = npc?.id || "";
-  document.getElementById("npc-name").value = npc?.name || "";
-  document.getElementById("npc-role").value = npc?.role || "";
-  document.getElementById("npc-gender").value = npc?.gender || "";
-  document.getElementById("npc-age").value = npc?.age || "";
-  document.getElementById("npc-appearance").value = npc?.appearance || "";
-  document.getElementById("npc-personality").value = npc?.personality || "";
-  document.getElementById("npc-rel").value = npc?.relationship_to_player || "";
-  document.getElementById("npc-loc").value = npc?.current_location || "";
-  document.getElementById("npc-state").value = npc?.current_state || "";
+  document.getElementById("npc-name").value = data.name || "";
+  document.getElementById("npc-role").value = data.role || "";
+  document.getElementById("npc-gender").value = data.gender || "";
+  document.getElementById("npc-age").value = data.age || "";
+  document.getElementById("npc-appearance").value = data.appearance || "";
+  document.getElementById("npc-personality").value = data.personality || "";
+  document.getElementById("npc-rel").value = data.relationship_to_player || "";
+  document.getElementById("npc-loc").value = data.current_location || "";
+  document.getElementById("npc-state").value = data.current_state || "";
   document.getElementById("npc-status").value = npc?.status || "active";
   document.getElementById("npc-status-reason").value = npc?.status_reason || "";
-  document.getElementById("npc-short-goal").value = npc?.short_term_goal || "";
-  document.getElementById("npc-long-goal").value = npc?.long_term_goal || "";
+  document.getElementById("npc-short-goal").value = data.short_term_goal || "";
+  document.getElementById("npc-long-goal").value = data.long_term_goal || "";
   document.getElementById("npc-secrets").value = npc?.secrets || "";
   document.getElementById("npc-delete-btn").style.display = npc ? "" : "none";
+  // Store pending portrait for post-save application
+  document.getElementById("npc-modal").__pendingPortrait = portrait || null;
 
   // Render dev log
   const logList = document.getElementById("npc-dev-log-list");
@@ -741,6 +750,17 @@ async function saveNpc() {
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const saved = await res.json();
+    // Apply pending portrait from card import if present
+    const pendingPortrait = document.getElementById("npc-modal").__pendingPortrait;
+    if (pendingPortrait) {
+      document.getElementById("npc-modal").__pendingPortrait = null;
+      await fetch(`/api/campaigns/${CAMPAIGN_ID}/npcs/${saved.id}/portrait`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data_url: pendingPortrait }),
+      });
+      saved.portrait_image = pendingPortrait;
+    }
     _npcs = _npcs.filter(n => n.id !== saved.id).concat([saved]);
     _npcs.sort((a, b) => a.name.localeCompare(b.name));
     closeModal("npc-modal");
@@ -1203,14 +1223,75 @@ async function runSaveTemplate() {
 
 // ── Campaign settings / delete ─────────────────────────────────────────────────
 
-function openEditCampaign() {
-  const name = prompt("Campaign name:", _campaign?.name || "");
-  if (!name?.trim()) return;
-  fetch(`/api/campaigns/${CAMPAIGN_ID}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: name.trim() }),
-  }).then(r => r.json()).then(d => { _campaign = d; renderAll(); });
+function csSync(key, value, decimals) {
+  const lbl = document.getElementById(`cs-lbl-${key}`);
+  if (lbl) lbl.textContent = decimals > 0 ? parseFloat(value).toFixed(decimals) : value;
+}
+
+function csResetDefaults() {
+  const defaults = { temperature:0.80, top_p:0.95, top_k:0, min_p:0.05, repeat_penalty:1.10, max_tokens:1024, seed:-1 };
+  for (const [k, v] of Object.entries(defaults)) {
+    const el = document.getElementById(`cs-${k}`);
+    if (el) { el.value = v; csSync(k, v, ["temperature","top_p","min_p","repeat_penalty"].includes(k) ? 2 : 0); }
+  }
+}
+
+async function openEditCampaign() {
+  // Populate name & model
+  document.getElementById("cs-name").value = _campaign?.name || "";
+
+  // Populate model select (load models if not yet populated)
+  const sel = document.getElementById("cs-model");
+  if (sel.options.length <= 1) {
+    try {
+      const res = await fetch("/api/models");
+      const data = await res.json();
+      const models = Array.isArray(data) ? data : (data.models || []);
+      models.forEach(m => {
+        const opt = document.createElement("option");
+        opt.value = m.name; opt.textContent = m.name;
+        sel.appendChild(opt);
+      });
+    } catch {/* ignore */}
+  }
+  sel.value = _campaign?.model_name || "";
+
+  // Populate gen settings sliders
+  const gs = _campaign?.gen_settings || {};
+  const defaults = { temperature:0.80, top_p:0.95, top_k:0, min_p:0.05, repeat_penalty:1.10, max_tokens:1024, seed:-1 };
+  for (const [k, def] of Object.entries(defaults)) {
+    const v = gs[k] ?? def;
+    const el = document.getElementById(`cs-${k}`);
+    if (el) { el.value = v; csSync(k, v, ["temperature","top_p","min_p","repeat_penalty"].includes(k) ? 2 : 0); }
+  }
+
+  openModal("campaign-settings-modal");
+}
+
+async function saveEditCampaign() {
+  const gs = _campaign?.gen_settings || {};
+  const body = {
+    name:           document.getElementById("cs-name").value.trim() || _campaign?.name,
+    model_name:     document.getElementById("cs-model").value || null,
+    temperature:    parseFloat(document.getElementById("cs-temperature").value),
+    top_p:          parseFloat(document.getElementById("cs-top_p").value),
+    top_k:          parseInt(document.getElementById("cs-top_k").value),
+    min_p:          parseFloat(document.getElementById("cs-min_p").value),
+    repeat_penalty: parseFloat(document.getElementById("cs-repeat_penalty").value),
+    max_tokens:     parseInt(document.getElementById("cs-max_tokens").value),
+    seed:           parseInt(document.getElementById("cs-seed").value),
+  };
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    _campaign = await res.json();
+    closeModal("campaign-settings-modal");
+    renderAll();
+    showBanner("Campaign settings saved.", "success");
+  } catch (e) { showBanner(`Save failed: ${e.message}`, "error"); }
 }
 
 async function confirmDeleteCampaign() {
@@ -1259,4 +1340,221 @@ function escHtml(str) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+// ── Portrait lightbox ─────────────────────────────────────────────────────────
+
+function openPortraitLightbox(src, name) {
+  document.getElementById("portrait-lightbox-img").src = src;
+  document.getElementById("portrait-lightbox-img").alt = name || "";
+  document.getElementById("portrait-lightbox").classList.remove("hidden");
+}
+
+// ── Import NPC from character card ────────────────────────────────────────────
+
+let _importCardData = null;   // parsed card fields
+let _importCardPortrait = null; // data URL from PNG
+let _importCardResult = null;  // {proposed_npc, contradictions} from backend
+
+function openImportCardModal() {
+  resetImportCard();
+  // Populate model select
+  fetch("/api/models").then(r => r.json()).then(models => {
+    const sel = document.getElementById("import-card-model");
+    sel.innerHTML = '<option value="">Default model</option>';
+    (Array.isArray(models) ? models : (models.models || [])).forEach(m => {
+      const o = document.createElement("option");
+      o.value = m.name; o.textContent = m.name;
+      sel.appendChild(o);
+    });
+  }).catch(() => {});
+  document.getElementById("import-card-modal").classList.remove("hidden");
+}
+
+function resetImportCard() {
+  _importCardData = null;
+  _importCardPortrait = null;
+  _importCardResult = null;
+  document.getElementById("import-card-file").value = "";
+  document.getElementById("import-card-file-info").textContent = "";
+  document.getElementById("import-card-context").value = "";
+  document.getElementById("import-card-step1").classList.remove("hidden");
+  document.getElementById("import-card-step2").classList.add("hidden");
+  document.getElementById("import-card-step1-footer").style.display = "";
+  document.getElementById("import-card-step2-footer").classList.add("hidden");
+}
+
+// Wire up file input after DOM is ready
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("import-card-file")?.addEventListener("change", function () {
+    const file = this.files[0];
+    if (!file) return;
+    const isPng = /\.png$/i.test(file.name) || file.type === "image/png";
+    const infoEl = document.getElementById("import-card-file-info");
+    infoEl.textContent = `Loading ${file.name}…`;
+
+    if (isPng) {
+      let dataUrl = null;
+      let cardJson = null;
+      const finish = () => {
+        if (dataUrl === null || cardJson === null) return;
+        if (!cardJson) { infoEl.textContent = `No character data found in ${file.name}.`; return; }
+        _importCardData = cardJson;
+        _importCardPortrait = dataUrl;
+        infoEl.textContent = `Card loaded: ${cardJson.name || file.name} (PNG)`;
+      };
+      const ur = new FileReader();
+      ur.onload = e => { dataUrl = e.target.result; finish(); };
+      const br = new FileReader();
+      br.onload = e => {
+        const parsed = _parsePngCharaForImport(e.target.result);
+        cardJson = parsed || false;
+        finish();
+      };
+      ur.readAsDataURL(file);
+      br.readAsArrayBuffer(file);
+    } else {
+      const r = new FileReader();
+      r.onload = e => {
+        try {
+          const data = JSON.parse(e.target.result);
+          const card = data.data || data;
+          _importCardData = card;
+          _importCardPortrait = null;
+          infoEl.textContent = `Card loaded: ${card.name || card.char_name || file.name}`;
+        } catch {
+          infoEl.textContent = "Could not parse file as JSON.";
+        }
+      };
+      r.readAsText(file);
+    }
+  });
+});
+
+function _parsePngCharaForImport(arrayBuffer) {
+  try {
+    const view = new DataView(arrayBuffer);
+    if (view.getUint32(0) !== 0x89504E47) return null;
+    let offset = 8;
+    while (offset + 12 <= view.byteLength) {
+      const length = view.getUint32(offset);
+      const type = String.fromCharCode(view.getUint8(offset+4),view.getUint8(offset+5),view.getUint8(offset+6),view.getUint8(offset+7));
+      if (type === "tEXt" && length > 0) {
+        const data = new Uint8Array(arrayBuffer, offset + 8, length);
+        let sep = -1;
+        for (let i = 0; i < data.length; i++) { if (data[i] === 0) { sep = i; break; } }
+        if (sep !== -1) {
+          const keyword = new TextDecoder().decode(data.slice(0, sep));
+          if (keyword === "chara") {
+            const b64 = new TextDecoder("latin1").decode(data.slice(sep + 1));
+            try { const j = JSON.parse(atob(b64)); return j.data || j; } catch { return null; }
+          }
+        }
+      }
+      offset += 12 + length;
+      if (type === "IEND") break;
+    }
+  } catch {}
+  return null;
+}
+
+async function analyseImportCard() {
+  if (!_importCardData) {
+    showBanner("Please select a character card file first.", "warning");
+    return;
+  }
+  const card = _importCardData;
+  const context = document.getElementById("import-card-context").value.trim();
+  const model = document.getElementById("import-card-model").value;
+
+  const step1Footer = document.getElementById("import-card-step1-footer");
+  step1Footer.innerHTML = '<div class="spinner" style="display:inline-block"></div> <span class="muted">Analysing…</span>';
+
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/npcs/import-card`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: card.name || card.char_name || "Unknown",
+        description: card.description || "",
+        personality: card.personality || "",
+        scenario: card.scenario || "",
+        creator_notes: card.creator_notes || "",
+        additional_context: context,
+        model_name: model || null,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    _importCardResult = await res.json();
+    _showImportCardStep2();
+  } catch (e) {
+    step1Footer.innerHTML = `
+      <button class="btn btn-primary" onclick="analyseImportCard()">✨ Analyse Card</button>
+      <button class="btn" onclick="closeModal('import-card-modal')">Cancel</button>`;
+    showBanner(`Analysis failed: ${e.message}`, "error");
+  }
+}
+
+function _showImportCardStep2() {
+  const { proposed_npc: npc, contradictions } = _importCardResult;
+
+  // Render NPC preview
+  const preview = document.getElementById("import-card-npc-preview");
+  const fields = [
+    ["Name", npc.name], ["Gender", npc.gender], ["Age", npc.age],
+    ["Role", npc.role], ["Appearance", npc.appearance], ["Personality", npc.personality],
+    ["Relationship to Player", npc.relationship_to_player],
+    ["Current Location", npc.current_location], ["Current State", npc.current_state],
+    ["Short-term Goal", npc.short_term_goal], ["Long-term Goal", npc.long_term_goal],
+  ].filter(([, v]) => v);
+  preview.innerHTML = `<dl>${fields.map(([k, v]) =>
+    `<dt>${escHtml(k)}</dt><dd>${escHtml(v)}</dd>`).join("")}</dl>`;
+
+  // Render contradictions
+  const cdiv = document.getElementById("import-card-contradictions");
+  if (!contradictions || !contradictions.length) {
+    cdiv.innerHTML = '<div class="muted" style="font-size:0.85rem">No contradictions detected. This card integrates cleanly with your world.</div>';
+  } else {
+    cdiv.innerHTML = contradictions.map((c, i) => `
+      <div class="import-card-contradiction">
+        <label>
+          <input type="checkbox" data-contradiction="${i}" checked>
+          <div>
+            <div class="ic-field">${escHtml(c.field || "")}</div>
+            <div class="ic-issue">${escHtml(c.issue || "")}</div>
+            <div class="ic-suggested">→ ${escHtml(c.suggested || "")}</div>
+          </div>
+        </label>
+      </div>`).join("");
+  }
+
+  document.getElementById("import-card-step1").classList.add("hidden");
+  document.getElementById("import-card-step2").classList.remove("hidden");
+  document.getElementById("import-card-step1-footer").style.display = "none";
+  const s2f = document.getElementById("import-card-step2-footer");
+  s2f.classList.remove("hidden");
+  s2f.style.display = "flex";
+}
+
+function confirmImportCard() {
+  const { proposed_npc: npc, contradictions } = _importCardResult;
+
+  // Build the resolved NPC by applying checked adjustments
+  const resolved = { ...npc };
+  document.querySelectorAll("[data-contradiction]").forEach(cb => {
+    if (cb.checked) {
+      const i = parseInt(cb.dataset.contradiction);
+      const c = contradictions[i];
+      if (c && c.field && c.suggested) {
+        resolved[c.field] = c.suggested;
+      }
+    }
+  });
+
+  // Close import modal and pre-fill the NPC editor
+  closeModal("import-card-modal");
+  openEditNpc(null, resolved, _importCardPortrait);
 }

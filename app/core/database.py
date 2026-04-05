@@ -405,6 +405,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
     except Exception:
         pass
     try:
+        conn.execute("ALTER TABLE campaigns ADD COLUMN gen_settings TEXT NOT NULL DEFAULT '{}'")
+    except Exception:
+        pass
+    try:
         conn.execute("ALTER TABLE player_characters ADD COLUMN portrait_image TEXT")
     except Exception:
         pass

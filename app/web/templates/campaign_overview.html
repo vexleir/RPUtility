@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Campaign — RP Utility</title>
+  <script src="/static/theme.js?v={{CACHE_VER}}"></script>
   <link rel="stylesheet" href="/static/style.css?v={{CACHE_VER}}">
 </head>
 <body class="campaign-overview-layout">
@@ -13,6 +14,7 @@
     <div class="topnav-sub"><a href="/" class="muted" style="text-decoration:none">← Home</a></div>
     <div class="topnav-right" style="display:flex;align-items:center;gap:12px">
       <button class="btn btn-primary" id="play-btn" onclick="startPlay()">▶ Play</button>
+      <select id="theme-select" class="theme-select" onchange="setTheme(this.value)" title="Color theme"></select>
       <div class="status-dot" id="status-dot"></div>
       <span id="status-label" class="muted">Checking…</span>
     </div>
@@ -111,7 +113,10 @@
         <div class="world-section" data-section="npcs">
           <div class="world-section-header">
             <h3>NPCs</h3>
-            <button class="btn btn-sm" onclick="openEditNpc(null)">+ Add</button>
+            <div style="display:flex;gap:4px">
+              <button class="btn btn-sm" onclick="openImportCardModal()">⬆ Import Card</button>
+              <button class="btn btn-sm" onclick="openEditNpc(null)">+ Add</button>
+            </div>
           </div>
           <div id="npcs-list" class="entity-list"></div>
         </div>
@@ -595,6 +600,76 @@
   </div>
 
   <!-- ── Image Generation modal ───────────────────────────────────────── -->
+  <!-- ── Campaign Settings Modal ──────────────────────────────────── -->
+  <div id="campaign-settings-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('campaign-settings-modal')">
+    <div class="modal" style="max-width:540px;max-height:90vh;display:flex;flex-direction:column">
+      <div class="modal-header">
+        <span>Campaign Settings</span>
+        <button class="modal-close" onclick="closeModal('campaign-settings-modal')">✕</button>
+      </div>
+      <div class="modal-body" style="overflow-y:auto;flex:1">
+        <div class="form-group">
+          <label>Campaign Name</label>
+          <input type="text" id="cs-name" class="wb-field">
+        </div>
+        <div class="form-group">
+          <label>Ollama Model <span class="dim">(overrides default)</span></label>
+          <select id="cs-model" class="wb-field">
+            <option value="">Default model</option>
+          </select>
+        </div>
+        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin:16px 0 10px">Generation Parameters</div>
+        <div class="gen-setting-row">
+          <div class="gen-setting-label"><span>Temperature</span><span class="gen-setting-value" id="cs-lbl-temperature">0.80</span></div>
+          <input type="range" id="cs-temperature" min="0" max="2" step="0.05" value="0.80" oninput="csSync('temperature',this.value,2)">
+          <div class="gen-setting-bounds"><span>0</span><span>2</span></div>
+          <p class="form-hint">Controls randomness. Higher = more creative, lower = more focused.</p>
+        </div>
+        <div class="gen-setting-row">
+          <div class="gen-setting-label"><span>Top-P</span><span class="gen-setting-value" id="cs-lbl-top_p">0.95</span></div>
+          <input type="range" id="cs-top_p" min="0" max="1" step="0.01" value="0.95" oninput="csSync('top_p',this.value,2)">
+          <div class="gen-setting-bounds"><span>0</span><span>1</span></div>
+          <p class="form-hint">Nucleus sampling threshold.</p>
+        </div>
+        <div class="gen-setting-row">
+          <div class="gen-setting-label"><span>Top-K</span><span class="gen-setting-value" id="cs-lbl-top_k">0</span></div>
+          <input type="range" id="cs-top_k" min="0" max="200" step="1" value="0" oninput="csSync('top_k',this.value,0)">
+          <div class="gen-setting-bounds"><span>0 (off)</span><span>200</span></div>
+          <p class="form-hint">Limit sampling to top-K tokens. 0 = disabled.</p>
+        </div>
+        <div class="gen-setting-row">
+          <div class="gen-setting-label"><span>Min-P</span><span class="gen-setting-value" id="cs-lbl-min_p">0.05</span></div>
+          <input type="range" id="cs-min_p" min="0" max="1" step="0.01" value="0.05" oninput="csSync('min_p',this.value,2)">
+          <div class="gen-setting-bounds"><span>0 (off)</span><span>1</span></div>
+          <p class="form-hint">Minimum token probability relative to top token. 0 = disabled.</p>
+        </div>
+        <div class="gen-setting-row">
+          <div class="gen-setting-label"><span>Repeat Penalty</span><span class="gen-setting-value" id="cs-lbl-repeat_penalty">1.10</span></div>
+          <input type="range" id="cs-repeat_penalty" min="1" max="1.5" step="0.01" value="1.10" oninput="csSync('repeat_penalty',this.value,2)">
+          <div class="gen-setting-bounds"><span>1 (off)</span><span>1.5</span></div>
+          <p class="form-hint">Penalises repeating recent tokens.</p>
+        </div>
+        <div class="gen-setting-row">
+          <div class="gen-setting-label"><span>Max Tokens</span><span class="gen-setting-value" id="cs-lbl-max_tokens">1024</span></div>
+          <input type="range" id="cs-max_tokens" min="64" max="8192" step="64" value="1024" oninput="csSync('max_tokens',this.value,0)">
+          <div class="gen-setting-bounds"><span>64</span><span>8192</span></div>
+          <p class="form-hint">Maximum tokens per AI response.</p>
+        </div>
+        <div class="gen-setting-row">
+          <div class="gen-setting-label"><span>Seed</span><span class="gen-setting-value" id="cs-lbl-seed">-1</span></div>
+          <input type="range" id="cs-seed" min="-1" max="999999999" step="1" value="-1" oninput="csSync('seed',this.value,0)">
+          <div class="gen-setting-bounds"><span>-1 (random)</span><span>999 999 999</span></div>
+          <p class="form-hint">-1 = random seed. Fixed seed = reproducible output.</p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-sm btn-ghost" onclick="csResetDefaults()">Reset Defaults</button>
+        <button class="btn btn-primary" onclick="saveEditCampaign()">Save</button>
+        <button class="btn" onclick="closeModal('campaign-settings-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <div id="imggen-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('imggen-modal')">
     <div class="modal imggen-modal-inner">
       <div class="modal-header">
@@ -681,6 +756,81 @@
         <span class="muted" id="imggen-status" style="margin-right:auto;font-size:0.82rem"></span>
         <button class="btn btn-primary" id="imggen-submit-btn" onclick="submitImgGen()">🎨 Generate Image</button>
         <button class="btn" onclick="closeModal('imggen-modal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Portrait lightbox ─────────────────────────────────────────── -->
+  <div id="portrait-lightbox" class="portrait-lightbox hidden" onclick="document.getElementById('portrait-lightbox').classList.add('hidden')">
+    <img id="portrait-lightbox-img" class="portrait-lightbox-img" alt="">
+    <div class="portrait-lightbox-hint muted">Click anywhere to close</div>
+  </div>
+
+  <!-- ── Import NPC from card modal ────────────────────────────────── -->
+  <div id="import-card-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('import-card-modal')">
+    <div class="modal" style="max-width:680px;max-height:90vh;display:flex;flex-direction:column">
+      <div class="modal-header">
+        <span>Import NPC from Character Card</span>
+        <button class="modal-close" onclick="closeModal('import-card-modal')">✕</button>
+      </div>
+      <div class="modal-body" style="overflow-y:auto;flex:1">
+
+        <!-- Step 1: upload -->
+        <div id="import-card-step1">
+          <p class="muted" style="margin-bottom:12px;font-size:0.88rem">
+            Import a SillyTavern-format character card (.json or .png). The AI will translate it into
+            an NPC for this campaign, identify contradictions with the world, and suggest adjustments.
+          </p>
+          <div class="form-group">
+            <label>Character Card <span class="dim">(.json or .png)</span></label>
+            <input type="file" id="import-card-file" accept=".json,.png" style="color:var(--text)">
+            <div id="import-card-file-info" class="muted" style="font-size:0.82rem;margin-top:4px"></div>
+          </div>
+          <div class="form-group">
+            <label>Additional Context <span class="dim">(optional)</span></label>
+            <textarea id="import-card-context" rows="3"
+              placeholder="e.g. 'This character is a travelling merchant who arrived recently' or leave blank"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Model <span class="dim">(for analysis)</span></label>
+            <select id="import-card-model" class="wb-field">
+              <option value="">Default model</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Step 2: review contradictions -->
+        <div id="import-card-step2" class="hidden">
+          <div style="display:flex;gap:16px;flex-wrap:wrap">
+            <!-- Proposed NPC preview -->
+            <div style="flex:1;min-width:240px">
+              <h4 style="margin:0 0 10px">Proposed NPC</h4>
+              <div id="import-card-npc-preview" class="import-card-npc-preview"></div>
+            </div>
+            <!-- Contradictions -->
+            <div style="flex:1;min-width:240px">
+              <h4 style="margin:0 0 10px">Contradiction Report</h4>
+              <div id="import-card-contradictions">
+                <div class="muted">No contradictions detected.</div>
+              </div>
+            </div>
+          </div>
+          <p class="muted" style="font-size:0.82rem;margin-top:12px">
+            Check any adjustments you want to apply, then click "Import NPC" to open the editor pre-filled with the resolved data.
+          </p>
+        </div>
+
+      </div>
+      <div class="modal-footer">
+        <div id="import-card-step1-footer">
+          <button class="btn btn-primary" onclick="analyseImportCard()">✨ Analyse Card</button>
+          <button class="btn" onclick="closeModal('import-card-modal')">Cancel</button>
+        </div>
+        <div id="import-card-step2-footer" class="hidden" style="display:flex;gap:8px;width:100%">
+          <button class="btn" onclick="resetImportCard()" style="margin-right:auto">← Back</button>
+          <button class="btn btn-primary" onclick="confirmImportCard()">Import NPC →</button>
+          <button class="btn" onclick="closeModal('import-card-modal')">Cancel</button>
+        </div>
       </div>
     </div>
   </div>

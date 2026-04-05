@@ -16,6 +16,12 @@ let _facts = [];
 let _streaming = false;
 let _userName = "Player";
 
+// ── Regenerate state ──────────────────────────────────────────────────────────
+let _alternatives = [];      // all generated responses for the current exchange
+let _altIdx = 0;             // index of the currently shown / DB-committed response
+let _lastAiDiv = null;       // DOM node of the last AI bubble
+let _regenControlsDiv = null; // sibling DOM node holding nav + regen button
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -38,6 +44,9 @@ async function loadWorld() {
     document.getElementById("back-link").href = `/campaigns/${CAMPAIGN_ID}`;
     document.getElementById("cancel-setup-link").href = `/campaigns/${CAMPAIGN_ID}`;
     document.getElementById("campaign-name-badge").textContent = _campaign?.name || "";
+
+    // Initialise gen-settings sliders from campaign defaults
+    gsInitFromCampaign();
 
     // Populate setup datalist with known locations
     const dl = document.getElementById("location-suggestions");
@@ -130,13 +139,10 @@ async function streamOpeningNarration() {
   let buffer = "";
 
   try {
-    const temperature = parseFloat(document.getElementById("gs-temperature").value) || 0.8;
-    const maxTokens = parseInt(document.getElementById("gs-max-tokens").value) || 1024;
-
     const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${_scene.id}/open`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ temperature, max_tokens: maxTokens }),
+      body: JSON.stringify(gsGetParams()),
     });
 
     if (!res.ok) {
@@ -175,6 +181,9 @@ function showChatMode() {
   document.getElementById("scene-setup-panel").classList.add("hidden");
   document.getElementById("chat-body").style.display = "";
   document.getElementById("end-scene-btn").style.display = "";
+  if (!_scene?.confirmed) {
+    document.getElementById("delete-scene-btn").style.display = "";
+  }
 
   // Update header
   const title = _scene?.title || `Scene ${_scene?.scene_number ?? ""}`;
@@ -224,6 +233,8 @@ function renderExistingTurns() {
   const area = document.getElementById("messages-area");
   area.innerHTML = "";
   _scene.turns.forEach(t => {
+    // Skip the silent continue nudge — it's not a real user message
+    if (t.role === "user" && t.content === "(Continue the story.)") return;
     appendMessage(t.role, t.content);
   });
   scrollToBottom();
@@ -262,6 +273,9 @@ async function sendMessage() {
     }
   }
 
+  // Reset regenerate state — new exchange begins
+  _clearRegenState();
+
   appendMessage("user", text);
   scrollToBottom();
   _streaming = true;
@@ -271,18 +285,10 @@ async function sendMessage() {
   let buffer = "";
 
   try {
-    const temperature = parseFloat(document.getElementById("gs-temperature").value) || 0.8;
-    const maxTokens = parseInt(document.getElementById("gs-max-tokens").value) || 1024;
-
     const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${_scene.id}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message: text,
-        user_name: _userName,
-        temperature,
-        max_tokens: maxTokens,
-      }),
+      body: JSON.stringify({ message: text, user_name: _userName, ...gsGetParams() }),
     });
 
     if (!res.ok) {
@@ -303,6 +309,7 @@ async function sendMessage() {
 
     // Finalize
     finalizeStreamingMessage(aiDiv, buffer);
+    _trackAiResponse(aiDiv, buffer);
 
     // Update local scene turns
     if (!_scene.turns) _scene.turns = [];
@@ -317,6 +324,232 @@ async function sendMessage() {
     setSendEnabled(true);
     updateUndoButton();
     scrollToBottom();
+  }
+}
+
+async function continueStory() {
+  if (_streaming) return;
+
+  // Inject a silent system nudge — no user bubble shown in the chat
+  const continueMsg = "(Continue the story.)";
+
+  // Reset regenerate state — new exchange begins
+  _clearRegenState();
+
+  _streaming = true;
+  setSendEnabled(false);
+
+  const aiDiv = appendStreamingMessage();
+  let buffer = "";
+
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${_scene.id}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: continueMsg, user_name: "__continue__", ...gsGetParams() }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Unknown error" }));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      aiDiv.innerHTML = marked.parse(buffer);
+      scrollToBottom();
+    }
+
+    finalizeStreamingMessage(aiDiv, buffer);
+    _trackAiResponse(aiDiv, buffer);
+
+    if (!_scene.turns) _scene.turns = [];
+    _scene.turns.push({ role: "user", content: continueMsg });
+    _scene.turns.push({ role: "assistant", content: buffer });
+
+  } catch (e) {
+    aiDiv.innerHTML = `<span class="error-text">Error: ${escHtml(e.message)}</span>`;
+    showError(e.message);
+  } finally {
+    _streaming = false;
+    setSendEnabled(true);
+    updateUndoButton();
+    scrollToBottom();
+  }
+}
+
+// ── Regenerate helpers ────────────────────────────────────────────────────────
+
+function _clearRegenState() {
+  if (_regenControlsDiv) { _regenControlsDiv.remove(); _regenControlsDiv = null; }
+  _alternatives = [];
+  _altIdx = 0;
+  _lastAiDiv = null;
+}
+
+function _trackAiResponse(aiDiv, buffer) {
+  _lastAiDiv = aiDiv;
+  _alternatives = [buffer];
+  _altIdx = 0;
+  _renderRegenControls();
+}
+
+function _renderRegenControls() {
+  if (_regenControlsDiv) { _regenControlsDiv.remove(); _regenControlsDiv = null; }
+  if (!_lastAiDiv) return;
+
+  const div = document.createElement("div");
+  div.className = "regen-controls";
+
+  if (_alternatives.length > 1) {
+    const prev = document.createElement("button");
+    prev.className = "btn btn-ghost btn-xs";
+    prev.textContent = "←";
+    prev.title = "Previous response";
+    prev.disabled = _altIdx === 0;
+    prev.onclick = () => showAlternative(_altIdx - 1);
+
+    const counter = document.createElement("span");
+    counter.className = "regen-counter";
+    counter.textContent = `${_altIdx + 1} / ${_alternatives.length}`;
+
+    const next = document.createElement("button");
+    next.className = "btn btn-ghost btn-xs";
+    next.textContent = "→";
+    next.title = "Next response";
+    next.disabled = _altIdx === _alternatives.length - 1;
+    next.onclick = () => showAlternative(_altIdx + 1);
+
+    div.appendChild(prev);
+    div.appendChild(counter);
+    div.appendChild(next);
+  }
+
+  const regenBtn = document.createElement("button");
+  regenBtn.className = "btn btn-ghost btn-xs";
+  regenBtn.textContent = "↺ Regenerate";
+  regenBtn.title = "Generate a new response for this message";
+  regenBtn.onclick = regenerate;
+  div.appendChild(regenBtn);
+
+  _lastAiDiv.after(div);
+  _regenControlsDiv = div;
+}
+
+async function showAlternative(idx) {
+  if (idx < 0 || idx >= _alternatives.length || idx === _altIdx || !_lastAiDiv) return;
+  _altIdx = idx;
+  _lastAiDiv.innerHTML = marked.parse(_alternatives[idx]);
+  colorizeAiProse(_lastAiDiv);
+  _renderRegenControls();
+
+  // Update the last assistant turn in the DB to match selection
+  try {
+    await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${_scene.id}/turns/last-assistant`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: _alternatives[idx] }),
+    });
+  } catch (e) {
+    showError(`Could not save selection: ${e.message}`);
+  }
+
+  // Keep local turns in sync
+  if (_scene.turns && _scene.turns.length > 0) {
+    const last = _scene.turns[_scene.turns.length - 1];
+    if (last.role === "assistant") {
+      _scene.turns[_scene.turns.length - 1] = { role: "assistant", content: _alternatives[idx] };
+    }
+  }
+}
+
+async function regenerate() {
+  if (_streaming || !_lastAiDiv || !_scene) return;
+
+  // Remove controls while streaming
+  if (_regenControlsDiv) { _regenControlsDiv.remove(); _regenControlsDiv = null; }
+
+  _lastAiDiv.classList.add("streaming");
+  _lastAiDiv.innerHTML = '<span class="typing-dot"></span>';
+
+  _streaming = true;
+  setSendEnabled(false);
+
+  let buffer = "";
+
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${_scene.id}/regenerate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...gsGetParams() }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Unknown error" }));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      _lastAiDiv.innerHTML = marked.parse(buffer);
+      scrollToBottom();
+    }
+
+    finalizeStreamingMessage(_lastAiDiv, buffer);
+
+    // Add to alternatives and update local turns
+    _alternatives.push(buffer);
+    _altIdx = _alternatives.length - 1;
+
+    if (_scene.turns && _scene.turns.length > 0 &&
+        _scene.turns[_scene.turns.length - 1].role === "assistant") {
+      _scene.turns[_scene.turns.length - 1] = { role: "assistant", content: buffer };
+    }
+
+    _renderRegenControls();
+
+  } catch (e) {
+    _lastAiDiv.classList.remove("streaming");
+    _lastAiDiv.innerHTML = `<span class="error-text">Error: ${escHtml(e.message)}</span>`;
+    showError(e.message);
+    _renderRegenControls(); // restore the controls even on error
+  } finally {
+    _streaming = false;
+    setSendEnabled(true);
+    updateUndoButton();
+    scrollToBottom();
+  }
+}
+
+async function deleteScene() {
+  if (!_scene) return;
+  if (_scene.confirmed) {
+    showError("Cannot delete a confirmed scene.");
+    return;
+  }
+  if (!confirm("Delete this scene? This cannot be undone.")) return;
+
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${_scene.id}`, {
+      method: "DELETE",
+    });
+    if (!res.ok && res.status !== 204) {
+      const err = await res.json().catch(() => ({ detail: "Unknown error" }));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    window.location.href = `/campaigns/${CAMPAIGN_ID}`;
+  } catch (e) {
+    showError(`Delete failed: ${e.message}`);
   }
 }
 
@@ -598,13 +831,20 @@ function renderSidebar() {
   const sceneNpcIds = new Set(_scene?.npc_ids || []);
   const sceneNpcs = _npcs.filter(n => sceneNpcIds.has(n.id));
   if (sceneNpcs.length) {
-    npcContainer.innerHTML = sceneNpcs.map(n => `
-      <div class="sidebar-item">
-        <div class="sidebar-item-name">${escHtml(n.name)}</div>
-        ${n.role ? `<div class="sidebar-item-sub muted">${escHtml(n.role)}</div>` : ""}
-        ${n.current_state ? `<div class="sidebar-item-sub">${escHtml(n.current_state)}</div>` : ""}
-      </div>
-    `).join("");
+    npcContainer.innerHTML = sceneNpcs.map(n => {
+      const portraitHtml = n.portrait_image
+        ? `<img src="${escHtml(n.portrait_image)}" class="sidebar-npc-portrait" alt="${escHtml(n.name)}" onclick="openPortraitLightbox('${escHtml(n.portrait_image)}','${escHtml(n.name)}')" title="Click to enlarge">`
+        : `<div class="sidebar-npc-portrait sidebar-npc-portrait-placeholder">👤</div>`;
+      return `
+        <div class="sidebar-item sidebar-npc-item">
+          ${portraitHtml}
+          <div style="min-width:0">
+            <div class="sidebar-item-name">${escHtml(n.name)}</div>
+            ${n.role ? `<div class="sidebar-item-sub muted">${escHtml(n.role)}</div>` : ""}
+            ${n.current_state ? `<div class="sidebar-item-sub">${escHtml(n.current_state)}</div>` : ""}
+          </div>
+        </div>`;
+    }).join("");
   } else {
     npcContainer.innerHTML = '<div class="muted" style="font-size:0.8rem">No NPCs in this scene.</div>';
   }
@@ -760,6 +1000,7 @@ async function undoLastTurn() {
       throw new Error(err.detail || `HTTP ${res.status}`);
     }
     _scene = await res.json();
+    _clearRegenState();
     // Re-render the messages area from the updated turn list
     const area = document.getElementById("messages-area");
     area.innerHTML = "";
@@ -862,6 +1103,8 @@ function setupInput() {
 
 function setSendEnabled(enabled) {
   document.getElementById("send-btn").disabled = !enabled;
+  const continueBtn = document.getElementById("continue-btn");
+  if (continueBtn) continueBtn.disabled = !enabled;
 }
 
 function scrollToBottom() {
@@ -986,6 +1229,39 @@ async function saveScratchpad() {
 
 // ── Image generation bridge (used by campaign_imggen.js) ─────────────────────
 
+// ── Gen-settings helpers ──────────────────────────────────────────────────────
+
+function gsSync(key, value, decimals) {
+  const lbl = document.getElementById(`gs-lbl-${key}`);
+  if (lbl) lbl.textContent = decimals > 0 ? parseFloat(value).toFixed(decimals) : value;
+}
+
+function gsGetParams() {
+  return {
+    temperature:    parseFloat(document.getElementById("gs-temperature")?.value    ?? 0.8),
+    top_p:          parseFloat(document.getElementById("gs-top_p")?.value          ?? 0.95),
+    top_k:          parseInt(document.getElementById("gs-top_k")?.value            ?? 0),
+    min_p:          parseFloat(document.getElementById("gs-min_p")?.value          ?? 0.05),
+    repeat_penalty: parseFloat(document.getElementById("gs-repeat_penalty")?.value ?? 1.10),
+    max_tokens:     parseInt(document.getElementById("gs-max_tokens")?.value       ?? 1024),
+    seed:           parseInt(document.getElementById("gs-seed")?.value             ?? -1),
+  };
+}
+
+function gsInitFromCampaign() {
+  const gs = _campaign?.gen_settings || {};
+  const defaults = { temperature:0.80, top_p:0.95, top_k:0, min_p:0.05, repeat_penalty:1.10, max_tokens:1024, seed:-1 };
+  for (const [k, def] of Object.entries(defaults)) {
+    const v = gs[k] ?? def;
+    const el = document.getElementById(`gs-${k}`);
+    if (el) { el.value = v; gsSync(k, v, ["temperature","top_p","min_p","repeat_penalty"].includes(k) ? 2 : 0); }
+  }
+}
+
+function gsResetDefaults() {
+  gsInitFromCampaign();
+}
+
 function openSceneImgGen() {
   if (!_scene) { showToast("No active scene.", 3000); return; }
   openImgGen("scene", { sceneId: _scene.id });
@@ -1036,6 +1312,14 @@ function insertImgGenToChat_impl(dataUrl, prompt) {
   div.appendChild(hint);
   area.appendChild(div);
   scrollToBottom();
+}
+
+// ── Portrait lightbox ─────────────────────────────────────────────────────────
+
+function openPortraitLightbox(src, name) {
+  document.getElementById("portrait-lightbox-img").src = src;
+  document.getElementById("portrait-lightbox-img").alt = name || "";
+  document.getElementById("portrait-lightbox").classList.remove("hidden");
 }
 
 // ── Utility ───────────────────────────────────────────────────────────────────

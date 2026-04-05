@@ -85,6 +85,14 @@ class UpdateCampaignRequest(BaseModel):
     themes: Optional[list[str]] = None
     magic_system: Optional[str] = None
     notes: Optional[str] = None
+    # Gen settings
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    min_p: Optional[float] = None
+    repeat_penalty: Optional[float] = None
+    max_tokens: Optional[int] = None
+    seed: Optional[int] = None
 
 class SavePlayerCharacterRequest(BaseModel):
     name: str = "The Protagonist"
@@ -243,6 +251,12 @@ def update_campaign(campaign_id: str, req: UpdateCampaignRequest):
         updates["style_guide"] = sg
     if req.notes is not None:
         updates["notes"] = req.notes
+    _GS_FIELDS = ("temperature", "top_p", "top_k", "min_p", "repeat_penalty", "max_tokens", "seed")
+    if any(getattr(req, f) is not None for f in _GS_FIELDS):
+        gs = c.gen_settings
+        patch = {f: getattr(req, f) for f in _GS_FIELDS if getattr(req, f) is not None}
+        gs = gs.model_copy(update=patch)
+        updates["gen_settings"] = gs
     updated = store.update(campaign_id, **updates)
     if not updated:
         raise HTTPException(404, "Campaign not found")
@@ -408,6 +422,7 @@ def save_npc(campaign_id: str, req: SaveNpcRequest):
         secrets=req.secrets,
         short_term_goal=req.short_term_goal,
         long_term_goal=req.long_term_goal,
+        portrait_image=existing.portrait_image if existing else None,
         dev_log=existing.dev_log if existing else [],
         created_at=existing.created_at if existing else datetime.now(UTC).replace(tzinfo=None),
     )
@@ -609,6 +624,152 @@ def undo_last_turns(campaign_id: str, scene_id: str):
         scene.turns.pop()
     store.save(scene)
     return _scene_dict(scene)
+
+
+@router.delete("/{campaign_id}/scenes/{scene_id}", status_code=204)
+def delete_scene(campaign_id: str, scene_id: str):
+    """Delete an unconfirmed scene and all its turns."""
+    store = _scenes()
+    scene = store.get(scene_id)
+    if not scene or scene.campaign_id != campaign_id:
+        raise HTTPException(404, "Scene not found")
+    if scene.confirmed:
+        raise HTTPException(400, "Cannot delete a confirmed scene")
+    store.delete(scene_id)
+
+
+@router.put("/{campaign_id}/scenes/{scene_id}/turns/last-assistant")
+def replace_last_assistant_turn(campaign_id: str, scene_id: str, req: ReplaceLastAssistantRequest):
+    """Replace the content of the last assistant turn (used by the regenerate alternative selector)."""
+    store = _scenes()
+    scene = store.get(scene_id)
+    if not scene or scene.campaign_id != campaign_id:
+        raise HTTPException(404, "Scene not found")
+    if scene.confirmed:
+        raise HTTPException(400, "Cannot modify a confirmed scene")
+    for i in range(len(scene.turns) - 1, -1, -1):
+        if scene.turns[i].role == "assistant":
+            scene.turns[i] = SceneTurn(role="assistant", content=req.content)
+            store.save(scene)
+            return {"ok": True}
+    raise HTTPException(400, "No assistant turn found")
+
+
+@router.post("/{campaign_id}/scenes/{scene_id}/regenerate")
+def scene_regenerate_stream(campaign_id: str, scene_id: str, req: SceneRegenerateRequest):
+    """
+    Stream a new AI response for the same user message as the last exchange.
+    The previous assistant turn is replaced; the user turn is preserved.
+    """
+    import json as _json
+    import httpx
+
+    campaign = _campaigns().get(campaign_id)
+    if not campaign:
+        raise HTTPException(404, "Campaign not found")
+
+    scene_store = _scenes()
+    scene = scene_store.get(scene_id)
+    if not scene or scene.campaign_id != campaign_id:
+        raise HTTPException(404, "Scene not found")
+    if scene.confirmed:
+        raise HTTPException(400, "Scene is already confirmed")
+    if not scene.turns or scene.turns[-1].role != "assistant":
+        raise HTTPException(400, "Last turn is not an assistant turn")
+
+    # Strip the last assistant turn; extract the preceding user message
+    scene.turns.pop()
+    if not scene.turns or scene.turns[-1].role != "user":
+        raise HTTPException(400, "No preceding user turn found")
+    last_user_content = scene.turns.pop().content
+
+    # Load context
+    pc = _pcs().get(campaign_id)
+    world_facts_list = _facts().get_all(campaign_id)
+    threads_list = _threads().get_active(campaign_id)
+    chronicle_list = _chronicle().get_all(campaign_id)
+    places_list = _places().get_all(campaign_id)
+    factions_list = _factions().get_all(campaign_id)
+    npc_list = []
+    npc_rels_list = []
+    if scene.npc_ids:
+        npc_list = _npcs().get_many(scene.npc_ids)
+        npc_rels_list = _npc_relationships().get_for_npcs(campaign_id, scene.npc_ids)
+    all_npcs_list = _npcs().get_all(campaign_id) if scene.allow_unselected_npcs else []
+
+    messages = build_scene_messages(
+        campaign=campaign,
+        player_character=pc,
+        world_facts=world_facts_list,
+        npcs_in_scene=npc_list,
+        active_threads=threads_list,
+        chronicle=chronicle_list,
+        places=places_list,
+        factions=factions_list,
+        npc_relationships=npc_rels_list,
+        all_world_npcs=all_npcs_list,
+        allow_unselected_npcs=scene.allow_unselected_npcs,
+        scene=scene,
+        user_message=last_user_content,
+        user_name="Player",
+    )
+
+    model = campaign.model_name or config.ollama_model
+    gs = campaign.gen_settings
+    temperature    = req.temperature    if req.temperature    is not None else gs.temperature
+    top_p          = req.top_p          if req.top_p          is not None else gs.top_p
+    top_k          = req.top_k          if req.top_k          is not None else gs.top_k
+    min_p          = req.min_p          if req.min_p          is not None else gs.min_p
+    repeat_penalty = req.repeat_penalty if req.repeat_penalty is not None else gs.repeat_penalty
+    max_tokens     = req.max_tokens     if req.max_tokens     is not None else gs.max_tokens
+    seed           = req.seed           if req.seed           is not None else gs.seed
+
+    # Re-store the user turn before streaming begins
+    scene.turns.append(SceneTurn(role="user", content=last_user_content))
+
+    def _stream():
+        full_response: list[str] = []
+        try:
+            payload = {
+                "model": model,
+                "messages": messages,
+                "stream": True,
+                "options": {
+                    "temperature": temperature,
+                    "top_p": top_p,
+                    "top_k": top_k,
+                    "min_p": min_p,
+                    "repeat_penalty": repeat_penalty,
+                    "num_predict": max_tokens,
+                    "seed": seed,
+                    "num_ctx": config.context_window,
+                },
+            }
+            with httpx.stream(
+                "POST",
+                f"{config.ollama_base_url.rstrip('/')}/api/chat",
+                json=payload,
+                timeout=180.0,
+            ) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    chunk = _json.loads(line)
+                    delta = chunk.get("message", {}).get("content", "")
+                    if delta:
+                        full_response.append(delta)
+                        yield delta
+                    if chunk.get("done"):
+                        break
+        except Exception as e:
+            yield f"\n\n[Error: {e}]"
+            return
+
+        scene.turns.append(SceneTurn(role="assistant", content="".join(full_response)))
+        scene_store.save(scene)
+
+    return StreamingResponse(_stream(), media_type="text/plain")
 
 
 @router.get("/{campaign_id}/scenes/{scene_id}/prompt-preview")
@@ -1276,6 +1437,116 @@ def save_npc_portrait(campaign_id: str, npc_id: str, req: SaveImageRequest):
     _npcs().save(npc)
 
 
+_CARD_IMPORT_SYSTEM = """You are a campaign integration assistant for collaborative roleplay.
+
+You are given an existing campaign's world document and a SillyTavern-format character card.
+Your job is to:
+1. Convert the character card into an NPC that fits this campaign's world
+2. Identify contradictions between the card and the world (e.g. references to modern technology in a fantasy world, place names that don't exist, anachronistic elements)
+3. Suggest world-appropriate alternatives for each contradiction
+
+Output ONLY valid JSON with exactly this structure (no markdown fences, no extra text):
+{
+  "proposed_npc": {
+    "name": "Character name from card",
+    "gender": "inferred gender",
+    "age": "inferred age or age range",
+    "appearance": "physical description adapted to the world",
+    "personality": "personality from card",
+    "role": "their role in this world",
+    "relationship_to_player": "how they might relate to the player character",
+    "current_location": "a world-appropriate location",
+    "current_state": "their current situation",
+    "short_term_goal": "what they want right now",
+    "long_term_goal": "their deeper ambition"
+  },
+  "contradictions": [
+    {
+      "field": "which NPC field is affected (e.g. 'current_location', 'appearance', 'role')",
+      "issue": "description of the contradiction",
+      "original": "the original value from the card",
+      "suggested": "the world-appropriate alternative"
+    }
+  ]
+}
+
+If there are no contradictions, return an empty array for contradictions.
+Keep all text fields concise (1-2 sentences each).
+Output ONLY the JSON — no commentary before or after."""
+
+
+class ImportCardRequest(BaseModel):
+    name: str
+    description: str = ""
+    personality: str = ""
+    scenario: str = ""
+    creator_notes: str = ""
+    additional_context: str = ""
+    model_name: Optional[str] = None
+
+
+@router.post("/{campaign_id}/npcs/import-card")
+def import_npc_from_card(campaign_id: str, req: ImportCardRequest):
+    """Analyse a character card against the campaign world and return a proposed NPC + contradictions."""
+    import json as _json
+    _require_campaign(campaign_id)
+    from app.campaigns.world_builder import _ollama_generate, _extract_json
+
+    # Build world context from DB
+    facts = _facts().get_all(campaign_id)
+    world_parts: list[str] = []
+    if facts:
+        world_parts.append("WORLD FACTS:\n" + "\n".join(f"- {f.content}" for f in facts[:15]))
+    existing_npcs = _npcs().get_all(campaign_id)
+    if existing_npcs:
+        world_parts.append("EXISTING NPCS: " + ", ".join(n.name for n in existing_npcs[:20]))
+    factions = _factions().get_all(campaign_id)
+    if factions:
+        world_parts.append("FACTIONS:\n" + "\n".join(f"- {f.name}: {f.description}" for f in factions))
+    world_context = "\n\n".join(world_parts) or "No world document established yet."
+
+    # Build card text
+    card_parts = [f"NAME: {req.name}"]
+    if req.description:
+        card_parts.append(f"DESCRIPTION:\n{req.description[:800]}")
+    if req.personality:
+        card_parts.append(f"PERSONALITY:\n{req.personality[:400]}")
+    if req.scenario:
+        card_parts.append(f"SCENARIO:\n{req.scenario[:400]}")
+    if req.creator_notes:
+        card_parts.append(f"CREATOR NOTES:\n{req.creator_notes[:300]}")
+    if req.additional_context:
+        card_parts.append(f"ADDITIONAL CONTEXT:\n{req.additional_context}")
+    card_text = "\n\n".join(card_parts)
+
+    prompt = (
+        f"CAMPAIGN WORLD DOCUMENT:\n{world_context}\n\n"
+        f"CHARACTER CARD TO IMPORT:\n{card_text}\n\n"
+        f"Analyse this card for contradictions with the campaign world and return the integration JSON."
+    )
+
+    model = req.model_name or config.ollama_model
+    try:
+        raw = _ollama_generate(
+            config.ollama_base_url, model,
+            system=_CARD_IMPORT_SYSTEM,
+            prompt=prompt,
+            max_tokens=2048,
+            temperature=0.3,
+        )
+    except Exception as e:
+        raise HTTPException(503, f"AI unavailable: {e}")
+
+    data = _extract_json(raw)
+    if not data or "proposed_npc" not in data:
+        raise HTTPException(500, "AI did not return valid analysis. Try a different model or try again.")
+
+    return {
+        "proposed_npc": data.get("proposed_npc", {}),
+        "contradictions": data.get("contradictions", []),
+    }
+
+
 @router.patch("/{campaign_id}/scenes/{scene_id}/scene-image", status_code=204)
 def save_scene_image(campaign_id: str, scene_id: str, req: SaveImageRequest):
     """Save a generated image as the scene illustration."""
@@ -1456,7 +1727,8 @@ def generate_image_prompt(campaign_id: str, req: ImagePromptRequest):
         resp = httpx.post(
             f"{config.ollama_base_url.rstrip('/')}/api/chat",
             json=payload,
-            timeout=120.0,
+            # Short connect timeout (localhost), generous read timeout for slow/cold models
+            timeout=httpx.Timeout(10.0, read=300.0),
         )
         resp.raise_for_status()
         import re as _re
@@ -1487,6 +1759,14 @@ def generate_image_prompt(campaign_id: str, req: ImagePromptRequest):
         return {"prompt": prompt_text}
     except HTTPException:
         raise
+    except httpx.ConnectError:
+        raise HTTPException(503, "Cannot reach Ollama. Is it running?")
+    except httpx.TimeoutException:
+        raise HTTPException(504, (
+            "Prompt generation timed out (model took >5 min). "
+            "This usually means Ollama is loading a large model — wait a moment and try again, "
+            "or select a smaller/faster model."
+        ))
     except Exception as e:
         raise HTTPException(500, f"Prompt generation failed: {e}")
 
@@ -1568,6 +1848,7 @@ def refine_world_stream(req: RefineWorldRequest):
                     {"role": "user", "content": prompt},
                 ],
                 "stream": True,
+                "think": False,
                 "options": {"temperature": 0.75, "num_predict": 4096, "num_ctx": 8192},
             }
             with httpx.stream(
@@ -1586,6 +1867,32 @@ def refine_world_stream(req: RefineWorldRequest):
                         yield delta
                     if chunk.get("done"):
                         break
+        except Exception as e:
+            yield f"\n\n[ERROR: {e}]"
+
+    return StreamingResponse(_stream(), media_type="text/plain")
+
+
+class GenerateFromCardsRequest(BaseModel):
+    cards: list[dict] = []
+    lorebook_entries: list[dict] = []
+    additional_details: str = ""
+    model_name: Optional[str] = None
+
+
+@router.post("/world-builder/from-cards/stream")
+def generate_from_cards_stream(req: GenerateFromCardsRequest):
+    """Stream world synthesis from character cards and lorebook entries."""
+    from app.campaigns.world_builder import WorldBuilder
+    model = req.model_name or config.ollama_model
+    wb = WorldBuilder(base_url=config.ollama_base_url, model=model)
+
+    def _stream():
+        try:
+            for chunk in wb.generate_from_cards_stream(
+                req.cards, req.lorebook_entries, req.additional_details
+            ):
+                yield chunk
         except Exception as e:
             yield f"\n\n[ERROR: {e}]"
 
@@ -1723,11 +2030,33 @@ class SceneChatRequest(BaseModel):
     message: str
     user_name: str = "Player"
     temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    min_p: Optional[float] = None
+    repeat_penalty: Optional[float] = None
     max_tokens: Optional[int] = None
+    seed: Optional[int] = None
 
 class SceneOpenRequest(BaseModel):
     temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    min_p: Optional[float] = None
+    repeat_penalty: Optional[float] = None
     max_tokens: Optional[int] = None
+    seed: Optional[int] = None
+
+class SceneRegenerateRequest(BaseModel):
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    min_p: Optional[float] = None
+    repeat_penalty: Optional[float] = None
+    max_tokens: Optional[int] = None
+    seed: Optional[int] = None
+
+class ReplaceLastAssistantRequest(BaseModel):
+    content: str
 
 
 @router.post("/{campaign_id}/scenes/{scene_id}/open")
@@ -1785,8 +2114,14 @@ def scene_open_stream(campaign_id: str, scene_id: str, req: SceneOpenRequest):
     )
 
     model = campaign.model_name or config.ollama_model
-    temperature = req.temperature or config.temperature
-    max_tokens = req.max_tokens or config.max_tokens
+    gs = campaign.gen_settings
+    temperature    = req.temperature    if req.temperature    is not None else gs.temperature
+    top_p          = req.top_p          if req.top_p          is not None else gs.top_p
+    top_k          = req.top_k          if req.top_k          is not None else gs.top_k
+    min_p          = req.min_p          if req.min_p          is not None else gs.min_p
+    repeat_penalty = req.repeat_penalty if req.repeat_penalty is not None else gs.repeat_penalty
+    max_tokens     = req.max_tokens     if req.max_tokens     is not None else gs.max_tokens
+    seed           = req.seed           if req.seed           is not None else gs.seed
 
     def _stream():
         full_response: list[str] = []
@@ -1797,7 +2132,12 @@ def scene_open_stream(campaign_id: str, scene_id: str, req: SceneOpenRequest):
                 "stream": True,
                 "options": {
                     "temperature": temperature,
+                    "top_p": top_p,
+                    "top_k": top_k,
+                    "min_p": min_p,
+                    "repeat_penalty": repeat_penalty,
                     "num_predict": max_tokens,
+                    "seed": seed,
                     "num_ctx": config.context_window,
                 },
             }
@@ -1883,8 +2223,14 @@ def scene_chat_stream(campaign_id: str, scene_id: str, req: SceneChatRequest):
     )
 
     model = campaign.model_name or config.ollama_model
-    temperature = req.temperature or config.temperature
-    max_tokens = req.max_tokens or config.max_tokens
+    gs = campaign.gen_settings
+    temperature    = req.temperature    if req.temperature    is not None else gs.temperature
+    top_p          = req.top_p          if req.top_p          is not None else gs.top_p
+    top_k          = req.top_k          if req.top_k          is not None else gs.top_k
+    min_p          = req.min_p          if req.min_p          is not None else gs.min_p
+    repeat_penalty = req.repeat_penalty if req.repeat_penalty is not None else gs.repeat_penalty
+    max_tokens     = req.max_tokens     if req.max_tokens     is not None else gs.max_tokens
+    seed           = req.seed           if req.seed           is not None else gs.seed
 
     # Store user turn first (before streaming)
     scene.turns.append(SceneTurn(role="user", content=req.message))
@@ -1898,7 +2244,12 @@ def scene_chat_stream(campaign_id: str, scene_id: str, req: SceneChatRequest):
                 "stream": True,
                 "options": {
                     "temperature": temperature,
+                    "top_p": top_p,
+                    "top_k": top_k,
+                    "min_p": min_p,
+                    "repeat_penalty": repeat_penalty,
                     "num_predict": max_tokens,
+                    "seed": seed,
                     "num_ctx": config.context_window,
                 },
             }
@@ -1932,9 +2283,19 @@ def scene_chat_stream(campaign_id: str, scene_id: str, req: SceneChatRequest):
 
 # ── Post-scene AI tools ───────────────────────────────────────────────────────
 
-_SUGGEST_SUMMARY_SYSTEM = """You are a campaign scribe. Summarise a roleplay scene in 2–4 sentences.
-Focus on what happened, what changed, and what was decided. Be concrete and specific.
-Output ONLY the summary text — no titles, no labels, no markdown."""
+_SUGGEST_SUMMARY_SYSTEM = """You are a campaign record-keeper performing an OUT-OF-CHARACTER analysis task.
+
+IMPORTANT: The roleplay scene is OVER. Do NOT continue the story. Do NOT write any new dialogue, narration, or fiction. Do NOT act as the narrator or any character.
+
+Your only job is to write a factual, past-tense summary of what happened in the scene transcript you are given.
+
+Rules:
+- Write 2–4 sentences in plain past tense (e.g. "The player confronted...", "Elara revealed...", "The party escaped...")
+- Focus on: what happened, what changed, what was decided or discovered
+- Be specific about names, places, and outcomes
+- Do NOT use present tense, future tense, or continue any storyline
+- Do NOT add commentary, headings, labels, or markdown formatting
+- Output ONLY the summary paragraph — nothing else"""
 
 _SUGGEST_UPDATES_SYSTEM = """You are a world-state assistant for a collaborative roleplay campaign.
 A scene has just concluded. Analyse the transcript and suggest concrete updates to the world document
@@ -1984,11 +2345,19 @@ def suggest_scene_summary(campaign_id: str, scene_id: str):
     if not scene.turns:
         return {"summary": ""}
 
+    # Exclude silent continue nudges from the transcript
+    visible_turns = [t for t in scene.turns if t.content != "(Continue the story.)"]
     transcript = "\n\n".join(
         f"[{'Player' if t.role == 'user' else 'Narrator'}]: {t.content}"
-        for t in scene.turns
+        for t in visible_turns
     )
-    prompt = f"Scene title: {scene.title or 'Untitled'}\nLocation: {scene.location or 'Unknown'}\n\n{transcript}"
+    prompt = (
+        f"COMPLETED SCENE — write a factual past-tense summary of what happened.\n\n"
+        f"Scene title: {scene.title or 'Untitled'}\n"
+        f"Location: {scene.location or 'Unknown'}\n\n"
+        f"TRANSCRIPT (do not continue this — analyse it):\n\n{transcript}\n\n"
+        f"Write the summary now (past tense, 2–4 sentences, plain text only):"
+    )
 
     campaign = _campaigns().get(campaign_id)
     model = (campaign.model_name if campaign else None) or config.ollama_model
@@ -2001,16 +2370,25 @@ def suggest_scene_summary(campaign_id: str, scene_id: str):
                 {"role": "user", "content": prompt},
             ],
             "stream": False,
-            "options": {"temperature": 0.5, "num_predict": 512},
+            "options": {
+                "temperature": 0.5,
+                "num_predict": 512,
+                "num_ctx": config.context_window,
+            },
         }
         r = httpx.post(
             f"{config.ollama_base_url.rstrip('/')}/api/chat",
-            json=payload, timeout=120.0,
+            json=payload,
+            timeout=httpx.Timeout(10.0, read=300.0),
         )
         r.raise_for_status()
         summary = r.json()["message"]["content"].strip()
+    except httpx.ConnectError:
+        raise HTTPException(503, "Cannot reach Ollama. Is it running?")
+    except httpx.TimeoutException:
+        raise HTTPException(504, "Summary generation timed out. Try a faster model.")
     except Exception as e:
-        raise HTTPException(503, f"Could not reach Ollama: {e}")
+        raise HTTPException(503, f"Summary generation failed: {e}")
 
     return {"summary": summary}
 
@@ -2075,12 +2453,17 @@ def suggest_world_updates(campaign_id: str, scene_id: str):
         }
         r = httpx.post(
             f"{config.ollama_base_url.rstrip('/')}/api/chat",
-            json=payload, timeout=180.0,
+            json=payload,
+            timeout=httpx.Timeout(10.0, read=300.0),
         )
         r.raise_for_status()
         raw = r.json()["message"]["content"].strip()
+    except httpx.ConnectError:
+        raise HTTPException(503, "Cannot reach Ollama. Is it running?")
+    except httpx.TimeoutException:
+        raise HTTPException(504, "World updates generation timed out. Try a faster model.")
     except Exception as e:
-        raise HTTPException(503, f"Could not reach Ollama: {e}")
+        raise HTTPException(503, f"World updates generation failed: {e}")
 
     data = _extract_json(raw)
     return {
@@ -2105,6 +2488,7 @@ def _campaign_dict(c) -> dict:
         "name": c.name,
         "model_name": c.model_name,
         "style_guide": c.style_guide.model_dump(),
+        "gen_settings": c.gen_settings.model_dump(),
         "notes": c.notes,
         "cover_image": c.cover_image,
         "created_at": c.created_at.isoformat(),

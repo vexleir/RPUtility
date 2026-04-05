@@ -573,11 +573,23 @@ class StyleGuide(BaseModel):
     magic_system: str = ""             # world magic / technology rules fed to AI
 
 
+class GenSettings(BaseModel):
+    """Per-campaign AI generation parameters."""
+    temperature: float = 0.80
+    top_p: float = 0.95
+    top_k: int = 0
+    min_p: float = 0.05
+    repeat_penalty: float = 1.10
+    max_tokens: int = 1024
+    seed: int = -1
+
+
 class Campaign(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
     model_name: Optional[str] = None
     style_guide: StyleGuide = Field(default_factory=StyleGuide)
+    gen_settings: GenSettings = Field(default_factory=GenSettings)
     notes: str = ""                    # player scratchpad — never sent to AI
     cover_image: Optional[str] = None  # base64 data URL set via image generation
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

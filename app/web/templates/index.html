@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>RP Utility</title>
+  <script src="/static/theme.js?v={{CACHE_VER}}"></script>
   <link rel="stylesheet" href="/static/style.css?v={{CACHE_VER}}">
 </head>
 <body class="index-layout">
@@ -13,6 +14,7 @@
     <div class="topnav-title">🎭 <span>RP</span> Utility</div>
     <div class="topnav-sub">local-first AI roleplay</div>
     <div class="topnav-status">
+      <select id="theme-select" class="theme-select" onchange="setTheme(this.value)" title="Color theme"></select>
       <div class="status-dot" id="status-dot"></div>
       <span id="status-label" class="muted">Checking…</span>
     </div>
@@ -22,38 +24,73 @@
 
   <div class="index-body">
 
-    <!-- ── Left: Campaigns + Sessions ────────────────────────────── -->
-    <div class="sessions-col">
-      <!-- Campaigns -->
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-        <h2 style="margin:0">Campaigns</h2>
-        <div style="display:flex;gap:8px">
-          <button class="btn btn-sm" onclick="openImportTemplateModal()">⬆ Import Template</button>
-          <a href="/campaigns/new" class="btn btn-primary btn-sm" style="text-decoration:none">+ New Campaign</a>
-        </div>
+    <!-- ── Campaigns ──────────────────────────────────────────────── -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <h2 style="margin:0">Campaigns</h2>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-sm" onclick="openImportTemplateModal()">⬆ Import Template</button>
+        <a href="/campaigns/new" class="btn btn-primary btn-sm" style="text-decoration:none">+ New Campaign</a>
       </div>
-      <div class="session-list" id="campaign-list">
-        <div style="display:flex;align-items:center;gap:10px;color:var(--text-muted)">
-          <div class="spinner"></div> Loading…
-        </div>
-      </div>
-
-      <!-- Legacy Sessions -->
-      <h2 style="margin-top:28px">Sessions <span class="dim" style="font-size:0.75rem;font-weight:400">(legacy)</span></h2>
-      <div class="session-list" id="session-list">
-        <div style="display:flex;align-items:center;gap:10px;color:var(--text-muted)">
-          <div class="spinner"></div> Loading…
-        </div>
+    </div>
+    <div class="session-list" id="campaign-list">
+      <div style="display:flex;align-items:center;gap:10px;color:var(--text-muted)">
+        <div class="spinner"></div> Loading…
       </div>
     </div>
 
-    <!-- ── Right: New Session ─────────────────────────────────────── -->
-    <div class="new-session-col">
-      <h2>New Session</h2>
+  </div><!-- end index-body -->
 
+  <!-- ── Library ──────────────────────────────────────────────────────── -->
+  <div class="library-section">
+    <div class="library-header">
+      <h2>Library</h2>
+      <div class="library-actions">
+        <button class="btn btn-sm" onclick="triggerImport('card')">⬆ Import Card</button>
+        <button class="btn btn-sm" onclick="triggerImport('lorebook')">⬆ Import Lorebook</button>
+        <button class="btn btn-sm" onclick="reloadAssets()" id="reload-btn" title="Reload cards and lorebooks from disk">↺ Reload</button>
+      </div>
+    </div>
+
+    <input type="file" id="card-file-input" accept=".json,.png" style="display:none" onchange="uploadFile('card', this)">
+    <input type="file" id="lorebook-file-input" accept=".json,.png" style="display:none" onchange="uploadFile('lorebook', this)">
+
+    <div id="library-banner" style="margin-bottom:10px"></div>
+
+    <div class="library-cols">
+      <div class="library-col">
+        <h3>Character Cards</h3>
+        <div class="card-library-grid" id="card-library-grid">
+          <div class="dim">Loading…</div>
+        </div>
+      </div>
+      <div class="library-col">
+        <h3>Lorebooks</h3>
+        <div class="lorebook-library-list" id="lorebook-library-list">
+          <div class="dim">Loading…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Legacy Section (collapsed by default) ───────────────────────── -->
+  <div class="legacy-section" id="legacy-section">
+    <div class="legacy-summary" id="legacy-toggle" onclick="toggleLegacy()">Single-session mode (legacy) →</div>
+
+    <div class="legacy-body hidden" id="legacy-body">
+      <!-- Sessions list -->
+      <div style="margin-bottom:24px">
+        <h3 style="margin:0 0 10px">Previous Sessions</h3>
+        <div class="session-list" id="session-list">
+          <div style="display:flex;align-items:center;gap:10px;color:var(--text-muted)">
+            <div class="spinner"></div> Loading…
+          </div>
+        </div>
+      </div>
+
+      <!-- New session form -->
+      <h3 style="margin:0 0 12px">New Session</h3>
       <form id="create-form" autocomplete="off">
 
-        <!-- Shared fields (both modes) -->
         <div class="form-group">
           <label for="session-name">Session Name</label>
           <input type="text" id="session-name" placeholder="e.g. The Crosshaven Affair" required>
@@ -72,13 +109,11 @@
           <input type="text" id="location-input" placeholder="e.g. Tallow &amp; Ink Tavern, Crosshaven">
         </div>
 
-        <!-- Mode tab bar -->
         <div class="tab-bar">
           <button type="button" class="tab-btn active" data-tab="card" onclick="switchTab('card')">Character Card</button>
           <button type="button" class="tab-btn" data-tab="scenario" onclick="switchTab('scenario')">Scenario</button>
         </div>
 
-        <!-- Tab: Character Card (existing) -->
         <div id="tab-card">
           <div class="form-group">
             <label for="char-select">Character Card</label>
@@ -87,7 +122,6 @@
             </select>
             <div class="card-preview hidden" id="card-preview"></div>
           </div>
-
           <div class="form-group">
             <label for="lorebook-select">Lorebook <span class="dim">(optional)</span></label>
             <select id="lorebook-select">
@@ -97,7 +131,6 @@
           </div>
         </div>
 
-        <!-- Tab: Scenario (free-text) -->
         <div id="tab-scenario" class="hidden">
           <div class="form-group">
             <label for="scenario-char-name">Character Name <span class="dim">(the AI's name)</span></label>
@@ -105,8 +138,8 @@
           </div>
           <div class="form-group">
             <label for="scenario-text">World, Characters &amp; Situation</label>
-            <textarea id="scenario-text" rows="10"
-              placeholder="Describe the world, the AI character, and the opening situation in your own words. This text becomes the AI's full context — include personality, setting, tone, and any rules for the roleplay."></textarea>
+            <textarea id="scenario-text" rows="8"
+              placeholder="Describe the world, the AI character, and the opening situation in your own words."></textarea>
           </div>
         </div>
 
@@ -115,46 +148,8 @@
         </button>
 
       </form>
-
-    </div>
-
-  </div><!-- end index-body -->
-
-  <!-- ── Library ──────────────────────────────────────────────────────── -->
-  <div class="library-section">
-    <div class="library-header">
-      <h2>Library</h2>
-      <div class="library-actions">
-        <button class="btn btn-sm" onclick="triggerImport('card')">⬆ Import Card</button>
-        <button class="btn btn-sm" onclick="triggerImport('lorebook')">⬆ Import Lorebook</button>
-        <button class="btn btn-sm" onclick="reloadAssets()" id="reload-btn" title="Reload cards and lorebooks from disk">↺ Reload</button>
-      </div>
-    </div>
-
-    <!-- hidden file inputs -->
-    <input type="file" id="card-file-input" accept=".json,.png" style="display:none" onchange="uploadFile('card', this)">
-    <input type="file" id="lorebook-file-input" accept=".json,.png" style="display:none" onchange="uploadFile('lorebook', this)">
-
-    <div id="library-banner" style="margin-bottom:10px"></div>
-
-    <div class="library-cols">
-      <!-- Cards -->
-      <div class="library-col">
-        <h3>Character Cards</h3>
-        <div class="card-library-grid" id="card-library-grid">
-          <div class="dim">Loading…</div>
-        </div>
-      </div>
-
-      <!-- Lorebooks -->
-      <div class="library-col">
-        <h3>Lorebooks</h3>
-        <div class="lorebook-library-list" id="lorebook-library-list">
-          <div class="dim">Loading…</div>
-        </div>
-      </div>
-    </div>
-  </div>
+    </div><!-- legacy-body -->
+  </div><!-- legacy-section -->
 
   <!-- ── Detail Modal ──────────────────────────────────────────────────── -->
   <div id="detail-modal" class="modal-backdrop hidden" onclick="closeModal(event)">
@@ -169,7 +164,7 @@
     <div class="modal-box" style="max-width:480px">
       <button class="modal-close" onclick="closeImportTemplateModal()">✕</button>
       <h3 style="margin:0 0 8px">Import World Template</h3>
-      <p class="dim" style="font-size:13px;margin-bottom:16px">Load a <code>_template.json</code> file shared by another user. This creates a new campaign pre-populated with their world document — NPCs, factions, places, and lore. No scene history is imported.</p>
+      <p class="dim" style="font-size:13px;margin-bottom:16px">Load a <code>_template.json</code> file shared by another user. This creates a new campaign pre-populated with their world document.</p>
       <div class="form-group">
         <label>Campaign Name</label>
         <input type="text" id="import-template-name" placeholder="Name for the new campaign">

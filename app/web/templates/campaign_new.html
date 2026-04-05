@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>New Campaign — RP Utility</title>
+  <script src="/static/theme.js?v={{CACHE_VER}}"></script>
   <link rel="stylesheet" href="/static/style.css?v={{CACHE_VER}}">
 </head>
 <body class="index-layout">
@@ -12,6 +13,7 @@
     <div class="topnav-title">🎭 <span>RP</span> Utility</div>
     <div class="topnav-sub"><a href="/" class="muted" style="text-decoration:none">← Back to Home</a></div>
     <div class="topnav-status">
+      <select id="theme-select" class="theme-select" onchange="setTheme(this.value)" title="Color theme"></select>
       <div class="status-dot" id="status-dot"></div>
       <span id="status-label" class="muted">Checking…</span>
     </div>
@@ -23,10 +25,6 @@
   <div id="step-describe" class="wb-step">
     <div class="wb-step-inner">
       <h2>New Campaign</h2>
-      <p class="muted" style="margin-bottom:20px">
-        Describe your world in as much or as little detail as you like. The AI will fill in anything
-        you leave out, but will always honour exactly what you write.
-      </p>
 
       <div class="form-group">
         <label for="campaign-name-input">Campaign Name</label>
@@ -40,22 +38,66 @@
         </select>
       </div>
 
-      <div class="form-group">
-        <label for="world-description">World Description</label>
-        <textarea id="world-description" rows="12"
-          placeholder="Examples:
-• 'I want to play a powerful wizard in a dark fantasy world.'
-• 'A noir detective in a rain-soaked city where magic is illegal. My character is ex-military, gruff, drinks too much, but has a code of honour.'
-• 'Far future space opera. The Empire just fell. My character is a former imperial soldier trying to find meaning. Key factions: the Remnant Fleet, the Free Colonies, the Church of the Void.'"></textarea>
-        <div class="form-hint">The more you write, the more the AI will preserve your exact vision. Short prompts are totally fine too.</div>
+      <!-- Mode tabs -->
+      <div class="tab-bar" style="margin-bottom:16px">
+        <button type="button" class="tab-btn active" onclick="switchCreateMode('describe')">✍ Describe World</button>
+        <button type="button" class="tab-btn" onclick="switchCreateMode('cards')">📂 Import Cards</button>
       </div>
 
-      <div style="display:flex;gap:12px;margin-top:8px">
-        <button class="btn btn-primary" id="generate-btn" onclick="generateWorld()" style="flex:1;justify-content:center">
-          ✨ Generate World
-        </button>
-        <a href="/" class="btn" style="text-decoration:none">Cancel</a>
+      <!-- Mode: Describe -->
+      <div id="mode-describe">
+        <p class="muted" style="margin-bottom:12px">
+          Describe your world in as much or as little detail as you like. The AI fills in anything you leave out.
+        </p>
+        <div class="form-group">
+          <label for="world-description">World Description</label>
+          <textarea id="world-description" rows="10"
+            placeholder="Examples:&#10;• 'I want to play a powerful wizard in a dark fantasy world.'&#10;• 'A noir detective in a rain-soaked city where magic is illegal…'"></textarea>
+          <div class="form-hint">The more you write, the more the AI will preserve your exact vision.</div>
+        </div>
+        <div style="display:flex;gap:12px;margin-top:8px">
+          <button class="btn btn-primary" id="generate-btn" onclick="generateWorld()" style="flex:1;justify-content:center">
+            ✨ Generate World
+          </button>
+          <a href="/" class="btn" style="text-decoration:none">Cancel</a>
+        </div>
       </div>
+
+      <!-- Mode: Import Cards -->
+      <div id="mode-cards" class="hidden">
+        <p class="muted" style="margin-bottom:12px">
+          Import SillyTavern-format character cards and lorebooks. The AI will synthesise a full
+          world document from them, reconciling any contradictions.
+        </p>
+
+        <div class="form-group">
+          <label>NPC Character Cards <span class="dim">(.json or .png — SillyTavern format, multiple allowed)</span></label>
+          <input type="file" id="card-import-files" accept=".json,.png" multiple style="color:var(--text)">
+          <div id="card-import-preview" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px"></div>
+        </div>
+
+        <div class="form-group">
+          <label>Lorebooks <span class="dim">(.json — optional, multiple allowed)</span></label>
+          <input type="file" id="lorebook-import-files" accept=".json" multiple style="color:var(--text)">
+          <div id="lorebook-import-preview" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px"></div>
+        </div>
+
+        <div class="form-group">
+          <label>Additional Details <span class="dim">(optional)</span></label>
+          <textarea id="cards-extra-details" rows="4"
+            placeholder="Tone, era, relationships between characters not captured in the cards, your player character concept, etc."></textarea>
+        </div>
+
+        <div id="cards-import-info" class="muted" style="font-size:0.82rem;margin-bottom:8px"></div>
+
+        <div style="display:flex;gap:12px;margin-top:8px">
+          <button class="btn btn-primary" onclick="generateFromCards()" style="flex:1;justify-content:center">
+            ✨ Synthesise World from Cards
+          </button>
+          <a href="/" class="btn" style="text-decoration:none">Cancel</a>
+        </div>
+      </div>
+
     </div>
   </div>
 
@@ -63,7 +105,7 @@
   <div id="step-stream" class="wb-step hidden">
     <div class="wb-step-inner">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-        <h2 style="margin:0">Generating World…</h2>
+        <h2 style="margin:0" id="stream-output-heading">Generating World…</h2>
         <span id="stream-char-count" class="muted" style="font-size:0.85rem"></span>
       </div>
       <p class="muted" style="margin-bottom:14px;font-size:0.9rem">

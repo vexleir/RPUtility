@@ -26,10 +26,12 @@ from app.core.models import WorldBuildResult
 def _extract_json(text: str) -> dict:
     """
     Robustly pull the first JSON object out of an LLM response.
-    The model often wraps JSON in markdown code fences.
+    The model often wraps JSON in markdown code fences or thinking blocks.
     """
+    # Strip <think>...</think> blocks (Qwen3, DeepSeek-R1, etc.)
+    cleaned = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE)
     # Strip markdown fences
-    cleaned = re.sub(r"```(?:json)?\s*", "", text)
+    cleaned = re.sub(r"```(?:json)?\s*", "", cleaned)
     cleaned = re.sub(r"```", "", cleaned)
 
     # Try to find a JSON object
@@ -273,6 +275,7 @@ class WorldBuilder:
                 {"role": "user", "content": prompt},
             ],
             "stream": True,
+            "think": False,          # suppress chain-of-thought for thinking models
             "options": {
                 "temperature": 0.85,
                 "num_predict": 8192,
@@ -307,6 +310,90 @@ class WorldBuilder:
         if not data:
             raise RuntimeError("Model output could not be parsed as JSON.")
         return _dict_to_world_build_result(data)
+
+    # ── Cards + lorebook synthesis ────────────────────────────────────────
+
+    def generate_from_cards_stream(
+        self,
+        cards: list[dict],
+        lorebook_entries: list[dict],
+        additional_details: str = "",
+    ):
+        """
+        Stream a WorldBuildResult synthesised from SillyTavern-style character
+        cards and lorebook entries. Yields str chunks; caller accumulates and
+        calls parse_streamed().
+        """
+        # Build a structured prompt from the source material
+        card_block = ""
+        for i, c in enumerate(cards, 1):
+            name = c.get("name") or c.get("char_name") or f"Character {i}"
+            parts = [f"CHARACTER {i}: {name}"]
+            for field in ("description", "personality", "scenario", "creator_notes"):
+                v = (c.get(field) or "").strip()
+                if v:
+                    parts.append(f"  {field.upper()}: {v[:500]}")
+            card_block += "\n".join(parts) + "\n\n"
+
+        lore_block = ""
+        for entry in lorebook_entries:
+            keys = ", ".join(entry.get("keys") or entry.get("key") or [])
+            content = (entry.get("content") or "").strip()
+            if content:
+                lore_block += f"LORE [{keys}]: {content[:400]}\n\n"
+
+        prompt_parts = ["Synthesise a complete world document from the following source material."]
+        if card_block:
+            prompt_parts.append(f"CHARACTER CARDS:\n{card_block.strip()}")
+        if lore_block:
+            prompt_parts.append(f"LOREBOOK ENTRIES:\n{lore_block.strip()}")
+        if additional_details.strip():
+            prompt_parts.append(f"ADDITIONAL PLAYER NOTES:\n{additional_details.strip()}")
+        prompt_parts.append(
+            "Rules:\n"
+            "- Preserve every character card EXACTLY as the primary NPC list — do not alter names, personalities, or relationships\n"
+            "- Distribute lorebook content across world_facts, magic_system, and premise as appropriate\n"
+            "- If contradictions exist between cards or lorebook entries, choose the most internally consistent interpretation\n"
+            "- Fill in gaps for places, factions, and narrative_threads based on the overall tone\n"
+            "- Output ONLY the JSON world document"
+        )
+        prompt = "\n\n".join(prompt_parts)
+
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": _WORLD_BUILD_SYSTEM},
+                {"role": "user", "content": prompt},
+            ],
+            "stream": True,
+            "think": False,          # suppress chain-of-thought for thinking models
+            "options": {
+                "temperature": 0.80,
+                "num_predict": 8192,
+                "num_ctx": 16384,
+            },
+        }
+        try:
+            with httpx.stream(
+                "POST",
+                f"{self.base_url}/api/chat",
+                json=payload,
+                timeout=240.0,
+            ) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    chunk = json.loads(line)
+                    delta = chunk.get("message", {}).get("content", "")
+                    if delta:
+                        yield delta
+                    if chunk.get("done"):
+                        break
+        except httpx.RequestError as e:
+            raise RuntimeError(
+                f"Could not reach Ollama at {self.base_url}. Is Ollama running?"
+            ) from e
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
