@@ -2287,15 +2287,17 @@ _SUGGEST_SUMMARY_SYSTEM = """You are a campaign record-keeper performing an OUT-
 
 IMPORTANT: The roleplay scene is OVER. Do NOT continue the story. Do NOT write any new dialogue, narration, or fiction. Do NOT act as the narrator or any character.
 
-Your only job is to write a factual, past-tense summary of what happened in the scene transcript you are given.
+Your only job is to write a thorough factual, past-tense summary of EVERYTHING that happened across the ENTIRE scene transcript you are given. Cover events from start to finish — do not skip or compress important moments.
 
 Rules:
-- Write 2–4 sentences in plain past tense (e.g. "The player confronted...", "Elara revealed...", "The party escaped...")
-- Focus on: what happened, what changed, what was decided or discovered
+- Write as many sentences as needed to capture every significant event, revelation, decision, and outcome in the scene — do not artificially limit the length
+- Work chronologically through the scene from beginning to end
+- Mention every important character action, piece of information revealed, conflict, decision, and change in situation
+- Use past tense (e.g. "The player confronted...", "Elara revealed...", "The party escaped...")
 - Be specific about names, places, and outcomes
 - Do NOT use present tense, future tense, or continue any storyline
-- Do NOT add commentary, headings, labels, or markdown formatting
-- Output ONLY the summary paragraph — nothing else"""
+- Do NOT add commentary, headings, bullet points, labels, or markdown formatting
+- Output ONLY the summary as plain prose paragraphs — nothing else"""
 
 _SUGGEST_UPDATES_SYSTEM = """You are a world-state assistant for a collaborative roleplay campaign.
 A scene has just concluded. Analyse the transcript and suggest concrete updates to the world document
@@ -2352,11 +2354,11 @@ def suggest_scene_summary(campaign_id: str, scene_id: str):
         for t in visible_turns
     )
     prompt = (
-        f"COMPLETED SCENE — write a factual past-tense summary of what happened.\n\n"
+        f"COMPLETED SCENE — write a thorough factual past-tense summary covering every important event from start to finish.\n\n"
         f"Scene title: {scene.title or 'Untitled'}\n"
         f"Location: {scene.location or 'Unknown'}\n\n"
-        f"TRANSCRIPT (do not continue this — analyse it):\n\n{transcript}\n\n"
-        f"Write the summary now (past tense, 2–4 sentences, plain text only):"
+        f"TRANSCRIPT (do not continue this — analyse it from beginning to end):\n\n{transcript}\n\n"
+        f"Write the complete summary now (past tense, plain prose, cover everything that happened):"
     )
 
     campaign = _campaigns().get(campaign_id)
@@ -2372,7 +2374,7 @@ def suggest_scene_summary(campaign_id: str, scene_id: str):
             "stream": False,
             "options": {
                 "temperature": 0.5,
-                "num_predict": 512,
+                "num_predict": 2048,
                 "num_ctx": config.context_window,
             },
         }

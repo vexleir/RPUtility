@@ -187,7 +187,7 @@
   <!-- ── Edit modals ───────────────────────────────────────────────── -->
 
   <!-- Scene transcript viewer -->
-  <div id="transcript-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('transcript-modal')">
+  <div id="transcript-modal" class="modal-backdrop hidden">
     <div class="modal" style="max-width:720px;max-height:85vh;display:flex;flex-direction:column">
       <div class="modal-header">
         <span id="transcript-modal-title">Scene Transcript</span>
@@ -201,7 +201,7 @@
   </div>
 
   <!-- Chronicle entry editor -->
-  <div id="chronicle-edit-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('chronicle-edit-modal')">
+  <div id="chronicle-edit-modal" class="modal-backdrop hidden">
     <div class="modal" style="max-width:600px">
       <div class="modal-header">
         <span>Edit Chronicle Entry</span>
@@ -220,7 +220,7 @@
   </div>
 
   <!-- Chronicle compress selector -->
-  <div id="compress-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('compress-modal')">
+  <div id="compress-modal" class="modal-backdrop hidden">
     <div class="modal" style="max-width:560px">
       <div class="modal-header">
         <span>Compress Chronicle Entries</span>
@@ -239,7 +239,7 @@
   </div>
 
   <!-- World fact editor modal (replaces prompt()) -->
-  <div id="fact-edit-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('fact-edit-modal')">
+  <div id="fact-edit-modal" class="modal-backdrop hidden">
     <div class="modal" style="max-width:560px">
       <div class="modal-header">
         <span id="fact-edit-title">World Fact</span>
@@ -266,7 +266,7 @@
   </div>
 
   <!-- Generic text field editor -->
-  <div id="field-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('field-modal')">
+  <div id="field-modal" class="modal-backdrop hidden">
     <div class="modal" style="max-width:600px">
       <div class="modal-header">
         <span id="field-modal-title">Edit</span>
@@ -283,7 +283,7 @@
   </div>
 
   <!-- NPC editor -->
-  <div id="npc-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('npc-modal')">
+  <div id="npc-modal" class="modal-backdrop hidden">
     <div class="modal" style="max-width:660px;max-height:90vh;display:flex;flex-direction:column">
       <div class="modal-header">
         <span id="npc-modal-title">NPC</span>
@@ -341,7 +341,7 @@
   </div>
 
   <!-- NPC dev log entry adder -->
-  <div id="npc-devlog-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('npc-devlog-modal')">
+  <div id="npc-devlog-modal" class="modal-backdrop hidden">
     <div class="modal" style="max-width:480px">
       <div class="modal-header">
         <span>Add NPC Development Note</span>
@@ -359,7 +359,7 @@
   </div>
 
   <!-- Place editor -->
-  <div id="place-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('place-modal')">
+  <div id="place-modal" class="modal-backdrop hidden">
     <div class="modal" style="max-width:560px">
       <div class="modal-header">
         <span id="place-modal-title">Place</span>
@@ -380,7 +380,7 @@
   </div>
 
   <!-- Thread editor -->
-  <div id="thread-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('thread-modal')">
+  <div id="thread-modal" class="modal-backdrop hidden">
     <div class="modal" style="max-width:560px">
       <div class="modal-header">
         <span id="thread-modal-title">Narrative Thread</span>
@@ -409,7 +409,7 @@
   </div>
 
   <!-- Faction editor -->
-  <div id="faction-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('faction-modal')">
+  <div id="faction-modal" class="modal-backdrop hidden">
     <div class="modal" style="max-width:560px">
       <div class="modal-header">
         <span id="faction-modal-title">Faction</span>
@@ -433,7 +433,7 @@
   </div>
 
   <!-- PC editor -->
-  <div id="pc-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('pc-modal')">
+  <div id="pc-modal" class="modal-backdrop hidden">
     <div class="modal" style="max-width:660px;max-height:90vh;display:flex;flex-direction:column">
       <div class="modal-header">
         <span>Player Character</span>
@@ -470,7 +470,7 @@
   </div>
 
   <!-- PC dev log entry adder -->
-  <div id="pc-devlog-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('pc-devlog-modal')">
+  <div id="pc-devlog-modal" class="modal-backdrop hidden">
     <div class="modal" style="max-width:480px">
       <div class="modal-header">
         <span>Add Character Development Note</span>
@@ -488,7 +488,7 @@
   </div>
 
   <!-- NPC Relationship editor -->
-  <div id="rel-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('rel-modal')">
+  <div id="rel-modal" class="modal-backdrop hidden">
     <div class="modal" style="max-width:560px">
       <div class="modal-header">
         <span id="rel-modal-title">NPC Relationship</span>
@@ -522,7 +522,7 @@
   </div>
 
   <!-- ── Search modal ─────────────────────────────────────────────── -->
-  <div id="search-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('search-modal')">
+  <div id="search-modal" class="modal-backdrop hidden">
     <div class="modal" style="max-width:680px;max-height:86vh;display:flex;flex-direction:column">
       <div class="modal-header">
         <span>Search Scene Turns</span>
@@ -544,7 +544,7 @@
   </div>
 
   <!-- ── Stats modal ───────────────────────────────────────────────── -->
-  <div id="stats-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('stats-modal')">
+  <div id="stats-modal" class="modal-backdrop hidden">
     <div class="modal" style="max-width:540px">
       <div class="modal-header">
         <span>Campaign Statistics</span>
@@ -560,7 +560,7 @@
   </div>
 
   <!-- ── Restore modal ─────────────────────────────────────────────── -->
-  <div id="restore-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('restore-modal')">
+  <div id="restore-modal" class="modal-backdrop hidden">
     <div class="modal" style="max-width:480px">
       <div class="modal-header">
         <span>Restore from Backup</span>
@@ -579,7 +579,7 @@
   </div>
 
   <!-- ── Template modal ────────────────────────────────────────────── -->
-  <div id="template-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('template-modal')">
+  <div id="template-modal" class="modal-backdrop hidden">
     <div class="modal" style="max-width:440px">
       <div class="modal-header">
         <span>Save as Template</span>
@@ -601,7 +601,7 @@
 
   <!-- ── Image Generation modal ───────────────────────────────────────── -->
   <!-- ── Campaign Settings Modal ──────────────────────────────────── -->
-  <div id="campaign-settings-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('campaign-settings-modal')">
+  <div id="campaign-settings-modal" class="modal-backdrop hidden">
     <div class="modal" style="max-width:540px;max-height:90vh;display:flex;flex-direction:column">
       <div class="modal-header">
         <span>Campaign Settings</span>
@@ -670,7 +670,7 @@
     </div>
   </div>
 
-  <div id="imggen-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('imggen-modal')">
+  <div id="imggen-modal" class="modal-backdrop hidden">
     <div class="modal imggen-modal-inner">
       <div class="modal-header">
         <span id="imggen-title">Generate Image</span>
@@ -767,7 +767,7 @@
   </div>
 
   <!-- ── Import NPC from card modal ────────────────────────────────── -->
-  <div id="import-card-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeModal('import-card-modal')">
+  <div id="import-card-modal" class="modal-backdrop hidden">
     <div class="modal" style="max-width:680px;max-height:90vh;display:flex;flex-direction:column">
       <div class="modal-header">
         <span>Import NPC from Character Card</span>
