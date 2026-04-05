@@ -656,6 +656,11 @@ function renderRelationshipsList() {
 function openEditNpc(npc, prefill, portrait) {
   const data = prefill || npc || {};
   document.getElementById("npc-modal-title").textContent = npc ? "Edit NPC" : (prefill ? "Import NPC" : "New NPC");
+  // Reset generate strip
+  document.getElementById("npc-generate-desc").value = "";
+  const genStatus = document.getElementById("npc-generate-status");
+  genStatus.textContent = "";
+  genStatus.style.color = "";
   document.getElementById("npc-id").value = npc?.id || "";
   document.getElementById("npc-name").value = data.name || "";
   document.getElementById("npc-role").value = data.role || "";
@@ -687,6 +692,59 @@ function openEditNpc(npc, prefill, portrait) {
   });
 
   openModal("npc-modal");
+}
+
+async function generateNpc() {
+  const desc = document.getElementById("npc-generate-desc").value.trim();
+  if (!desc) {
+    showBanner("Enter a description first.", "warning");
+    document.getElementById("npc-generate-desc").focus();
+    return;
+  }
+  const status = document.getElementById("npc-generate-status");
+  const btn = document.querySelector("#npc-generate-strip .btn-primary");
+  status.textContent = "Generating…";
+  btn.disabled = true;
+
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/npcs/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description: desc }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Unknown error" }));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    const npc = await res.json();
+
+    // Populate fields — only overwrite fields that are currently empty
+    const fill = (id, val) => {
+      const el = document.getElementById(id);
+      if (el && !el.value.trim() && val) el.value = val;
+    };
+    // Name and role: always fill if AI returned them and field is blank
+    fill("npc-name", npc.name);
+    fill("npc-role", npc.role);
+    fill("npc-gender", npc.gender);
+    fill("npc-age", npc.age);
+    fill("npc-appearance", npc.appearance);
+    fill("npc-personality", npc.personality);
+    fill("npc-rel", npc.relationship_to_player);
+    fill("npc-loc", npc.current_location);
+    fill("npc-state", npc.current_state);
+    fill("npc-short-goal", npc.short_term_goal);
+    fill("npc-long-goal", npc.long_term_goal);
+    fill("npc-secrets", npc.secrets);
+
+    status.textContent = "✓ Fields filled — review and save.";
+    status.style.color = "var(--green)";
+  } catch (e) {
+    status.textContent = `Error: ${e.message}`;
+    status.style.color = "var(--red)";
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function openNpcDevLogAdd() {

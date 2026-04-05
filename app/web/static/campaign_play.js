@@ -94,6 +94,142 @@ function renderNpcCheckboxes() {
   });
 }
 
+// ── Scene setup quick-add helpers ────────────────────────────────────────────
+
+async function qaGenerateNpc() {
+  const desc = document.getElementById("qa-npc-desc").value.trim();
+  if (!desc) return;
+  const statusEl = document.getElementById("qa-npc-gen-status");
+  const btn = document.getElementById("qa-npc-gen-btn");
+  statusEl.textContent = "Generating…";
+  statusEl.style.color = "";
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/npcs/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description: desc }),
+    });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
+    const npc = await res.json();
+    const fill = (id, val) => { const el = document.getElementById(id); if (el && val) el.value = val; };
+    fill("qa-npc-name", npc.name);
+    fill("qa-npc-role", npc.role);
+    fill("qa-npc-gender", npc.gender);
+    fill("qa-npc-age", npc.age);
+    fill("qa-npc-appearance", npc.appearance);
+    fill("qa-npc-personality", npc.personality);
+    statusEl.textContent = "✓ Done";
+    statusEl.style.color = "var(--green)";
+  } catch (e) {
+    statusEl.textContent = `Error: ${e.message}`;
+    statusEl.style.color = "var(--red)";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function qaAddNpc() {
+  const name = document.getElementById("qa-npc-name").value.trim();
+  if (!name) { document.getElementById("qa-npc-status").textContent = "Name is required."; return; }
+  const statusEl = document.getElementById("qa-npc-status");
+  statusEl.textContent = "Saving…";
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/npcs`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        role: document.getElementById("qa-npc-role").value.trim(),
+        gender: document.getElementById("qa-npc-gender").value.trim(),
+        age: document.getElementById("qa-npc-age").value.trim(),
+        appearance: document.getElementById("qa-npc-appearance").value.trim(),
+        personality: document.getElementById("qa-npc-personality").value.trim(),
+      }),
+    });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
+    const saved = await res.json();
+    // Add to local NPC list and re-render checkboxes
+    _npcs.push(saved);
+    renderNpcCheckboxes();
+    // Auto-check the new NPC
+    const checkbox = document.querySelector(`#npc-checkboxes input[value="${saved.id}"]`);
+    if (checkbox) checkbox.checked = true;
+    // Clear form and collapse
+    ["qa-npc-desc","qa-npc-name","qa-npc-role","qa-npc-gender","qa-npc-age","qa-npc-appearance","qa-npc-personality"].forEach(id => {
+      document.getElementById(id).value = "";
+    });
+    document.getElementById("qa-npc-gen-status").textContent = "";
+    document.getElementById("qa-npc").removeAttribute("open");
+    statusEl.textContent = `✓ ${name} added and selected.`;
+    statusEl.style.color = "var(--green)";
+  } catch (e) {
+    statusEl.textContent = `Error: ${e.message}`;
+    statusEl.style.color = "var(--red)";
+  }
+}
+
+async function qaAddLocation() {
+  const name = document.getElementById("qa-loc-name").value.trim();
+  if (!name) { document.getElementById("qa-loc-status").textContent = "Name is required."; return; }
+  const statusEl = document.getElementById("qa-loc-status");
+  statusEl.textContent = "Saving…";
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/places`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        description: document.getElementById("qa-loc-desc").value.trim(),
+        current_state: document.getElementById("qa-loc-state").value.trim(),
+      }),
+    });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
+    const saved = await res.json();
+    // Add to datalist and set as selected location
+    const dl = document.getElementById("location-suggestions");
+    const opt = document.createElement("option");
+    opt.value = saved.name;
+    dl.appendChild(opt);
+    document.getElementById("setup-location").value = saved.name;
+    // Clear form and collapse
+    ["qa-loc-name","qa-loc-desc","qa-loc-state"].forEach(id => document.getElementById(id).value = "");
+    document.getElementById("qa-location").removeAttribute("open");
+    statusEl.textContent = `✓ "${name}" added and set as location.`;
+    statusEl.style.color = "var(--green)";
+  } catch (e) {
+    statusEl.textContent = `Error: ${e.message}`;
+    statusEl.style.color = "var(--red)";
+  }
+}
+
+async function qaAddFacts() {
+  const raw = document.getElementById("qa-facts-input").value.trim();
+  if (!raw) return;
+  const newFacts = raw.split("\n").map(l => l.trim()).filter(Boolean);
+  if (!newFacts.length) return;
+  const statusEl = document.getElementById("qa-facts-status");
+  statusEl.textContent = "Saving…";
+  try {
+    // Fetch existing facts, append new ones, replace all
+    const existing = await fetch(`/api/campaigns/${CAMPAIGN_ID}/world-facts`).then(r => r.json());
+    const allFacts = [...existing.map(f => f.content), ...newFacts];
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/world-facts`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ facts: allFacts }),
+    });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
+    document.getElementById("qa-facts-input").value = "";
+    document.getElementById("qa-facts").removeAttribute("open");
+    statusEl.textContent = `✓ ${newFacts.length} fact${newFacts.length > 1 ? "s" : ""} added.`;
+    statusEl.style.color = "var(--green)";
+  } catch (e) {
+    statusEl.textContent = `Error: ${e.message}`;
+    statusEl.style.color = "var(--red)";
+  }
+}
+
 // ── Scene setup ───────────────────────────────────────────────────────────────
 
 async function beginScene() {
@@ -698,6 +834,8 @@ async function loadWorldUpdateSuggestions() {
   document.getElementById("wu-npc-section").classList.add("hidden");
   document.getElementById("wu-facts-section").classList.add("hidden");
   document.getElementById("wu-threads-section").classList.add("hidden");
+  document.getElementById("wu-new-npcs-section").classList.add("hidden");
+  document.getElementById("wu-new-locations-section").classList.add("hidden");
   document.getElementById("wu-none-msg").classList.add("hidden");
   footer.style.display = "none";
 
@@ -719,8 +857,8 @@ async function loadWorldUpdateSuggestions() {
     "Based on what happened in this scene, the following world document updates are suggested. Uncheck any you want to skip, then click Apply.";
   footer.style.display = "";
 
-  const { npc_updates = [], new_facts = [], thread_updates = [] } = _pendingSuggestions;
-  const hasAny = npc_updates.length || new_facts.length || thread_updates.length;
+  const { npc_updates = [], new_facts = [], thread_updates = [], new_npcs = [], new_locations = [] } = _pendingSuggestions;
+  const hasAny = npc_updates.length || new_facts.length || thread_updates.length || new_npcs.length || new_locations.length;
 
   if (!hasAny) {
     document.getElementById("wu-none-msg").classList.remove("hidden");
@@ -766,6 +904,32 @@ async function loadWorldUpdateSuggestions() {
         </div>
       </label>`).join("");
   }
+
+  if (new_npcs.length) {
+    document.getElementById("wu-new-npcs-section").classList.remove("hidden");
+    document.getElementById("wu-new-npcs-list").innerHTML = new_npcs.map((n, i) => `
+      <label class="wu-item wu-new-entity">
+        <input type="checkbox" class="wu-new-npc-cb" data-index="${i}" checked>
+        <div class="wu-item-text">
+          <strong>${escHtml(n.name)}</strong>${n.role ? ` — <span class="muted">${escHtml(n.role)}</span>` : ""}
+          ${n.appearance ? `<div class="wu-entity-detail">${escHtml(n.appearance)}</div>` : ""}
+          <div class="wu-reason muted">${escHtml(n.significance || "")}</div>
+        </div>
+      </label>`).join("");
+  }
+
+  if (new_locations.length) {
+    document.getElementById("wu-new-locations-section").classList.remove("hidden");
+    document.getElementById("wu-new-locations-list").innerHTML = new_locations.map((l, i) => `
+      <label class="wu-item wu-new-entity">
+        <input type="checkbox" class="wu-new-loc-cb" data-index="${i}" checked>
+        <div class="wu-item-text">
+          <strong>${escHtml(l.name)}</strong>
+          ${l.description ? `<div class="wu-entity-detail">${escHtml(l.description)}</div>` : ""}
+          <div class="wu-reason muted">${escHtml(l.significance || "")}</div>
+        </div>
+      </label>`).join("");
+  }
 }
 
 async function applyWorldUpdates() {
@@ -774,7 +938,7 @@ async function applyWorldUpdates() {
   applyBtn.disabled = true;
   applyBtn.textContent = "Applying…";
 
-  const { npc_updates = [], new_facts = [], thread_updates = [] } = _pendingSuggestions;
+  const { npc_updates = [], new_facts = [], thread_updates = [], new_npcs = [], new_locations = [] } = _pendingSuggestions;
 
   // Apply checked NPC updates
   const checkedNpcs = [...document.querySelectorAll(".wu-npc-cb:checked")].map(cb => npc_updates[+cb.dataset.index]);
@@ -812,6 +976,42 @@ async function applyWorldUpdates() {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...thread, status: u.new_status }),
+    }).catch(() => {});
+  }
+
+  // Create approved new NPCs
+  const checkedNewNpcs = [...document.querySelectorAll(".wu-new-npc-cb:checked")].map(cb => new_npcs[+cb.dataset.index]);
+  for (const n of checkedNewNpcs) {
+    await fetch(`/api/campaigns/${CAMPAIGN_ID}/npcs`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: n.name,
+        role: n.role || "",
+        gender: n.gender || "",
+        age: n.age || "",
+        appearance: n.appearance || "",
+        personality: n.personality || "",
+        relationship_to_player: n.relationship_to_player || "",
+        current_location: n.current_location || "",
+        current_state: n.current_state || "",
+        short_term_goal: n.short_term_goal || "",
+        long_term_goal: n.long_term_goal || "",
+      }),
+    }).catch(() => {});
+  }
+
+  // Create approved new locations
+  const checkedNewLocs = [...document.querySelectorAll(".wu-new-loc-cb:checked")].map(cb => new_locations[+cb.dataset.index]);
+  for (const l of checkedNewLocs) {
+    await fetch(`/api/campaigns/${CAMPAIGN_ID}/places`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: l.name,
+        description: l.description || "",
+        current_state: l.current_state || "",
+      }),
     }).catch(() => {});
   }
 

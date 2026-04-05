@@ -291,6 +291,17 @@
       </div>
       <div class="modal-body" style="overflow-y:auto;flex:1">
         <input type="hidden" id="npc-id">
+
+        <!-- AI generate strip -->
+        <div id="npc-generate-strip" class="npc-generate-strip">
+          <textarea id="npc-generate-desc" class="wb-field" rows="2"
+            placeholder="Describe this NPC… e.g. 'A grizzled dwarf blacksmith who secretly works for the thieves guild'"></textarea>
+          <div style="display:flex;gap:8px;margin-top:6px;align-items:center">
+            <button class="btn btn-primary btn-sm" onclick="generateNpc()">✨ Generate Fields</button>
+            <span id="npc-generate-status" class="muted" style="font-size:0.82rem"></span>
+          </div>
+        </div>
+
         <div class="wb-grid-2">
           <div class="form-group"><label>Name</label><input type="text" class="wb-field" id="npc-name"></div>
           <div class="form-group"><label>Role</label><input type="text" class="wb-field" id="npc-role"></div>

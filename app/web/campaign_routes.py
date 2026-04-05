@@ -1485,6 +1485,11 @@ class ImportCardRequest(BaseModel):
     model_name: Optional[str] = None
 
 
+class GenerateNpcRequest(BaseModel):
+    description: str        # free-text intent from the player
+    model_name: Optional[str] = None
+
+
 @router.post("/{campaign_id}/npcs/import-card")
 def import_npc_from_card(campaign_id: str, req: ImportCardRequest):
     """Analyse a character card against the campaign world and return a proposed NPC + contradictions."""
@@ -1545,6 +1550,79 @@ def import_npc_from_card(campaign_id: str, req: ImportCardRequest):
         "proposed_npc": data.get("proposed_npc", {}),
         "contradictions": data.get("contradictions", []),
     }
+
+
+_GENERATE_NPC_SYSTEM = """You are a character creation assistant for collaborative roleplay.
+
+You are given a campaign world document and a player's description of an NPC they want to create.
+Your job is to flesh out all fields for this NPC, staying true to the player's intent and consistent with the world.
+
+Output ONLY valid JSON with exactly this structure (no markdown fences, no extra text):
+{
+  "name": "Character name",
+  "gender": "gender",
+  "age": "age or age range (e.g. 'mid-30s', '60s', 'young adult')",
+  "appearance": "physical description in 1-2 sentences",
+  "personality": "core personality traits in 1-2 sentences",
+  "role": "their role or occupation in the world",
+  "relationship_to_player": "how they might relate to the player character",
+  "current_location": "where they currently are",
+  "current_state": "their current situation or mood",
+  "short_term_goal": "what they want right now",
+  "long_term_goal": "their deeper ambition or life goal",
+  "secrets": "something they are hiding (optional, can be empty string)"
+}
+
+Rules:
+- Honour EVERY detail the player specified — do not contradict their description
+- Fill in only what the player left unspecified
+- Keep all fields concise (1-2 sentences)
+- Make the character internally consistent and fitting for the world
+- Output ONLY the JSON object — no commentary before or after"""
+
+
+@router.post("/{campaign_id}/npcs/generate")
+def generate_npc(campaign_id: str, req: GenerateNpcRequest):
+    """Generate a fully-populated NPC from a player's free-text description."""
+    _require_campaign(campaign_id)
+    from app.campaigns.world_builder import _ollama_generate, _extract_json
+
+    # Build world context
+    facts = _facts().get_all(campaign_id)
+    world_parts: list[str] = []
+    if facts:
+        world_parts.append("WORLD FACTS:\n" + "\n".join(f"- {f.content}" for f in facts[:15]))
+    existing_npcs = _npcs().get_all(campaign_id)
+    if existing_npcs:
+        world_parts.append("EXISTING NPCS: " + ", ".join(n.name for n in existing_npcs[:20]))
+    factions = _factions().get_all(campaign_id)
+    if factions:
+        world_parts.append("FACTIONS:\n" + "\n".join(f"- {f.name}: {f.description}" for f in factions))
+    world_context = "\n\n".join(world_parts) or "No world document established yet."
+
+    prompt = (
+        f"CAMPAIGN WORLD:\n{world_context}\n\n"
+        f"PLAYER'S NPC DESCRIPTION:\n{req.description.strip()}\n\n"
+        f"Generate the complete NPC JSON now."
+    )
+
+    model = req.model_name or config.ollama_model
+    try:
+        raw = _ollama_generate(
+            config.ollama_base_url, model,
+            system=_GENERATE_NPC_SYSTEM,
+            prompt=prompt,
+            max_tokens=1024,
+            temperature=0.7,
+        )
+    except Exception as e:
+        raise HTTPException(503, f"AI unavailable: {e}")
+
+    data = _extract_json(raw)
+    if not data or "name" not in data:
+        raise HTTPException(500, "AI did not return a valid NPC. Try again or use a different model.")
+
+    return data
 
 
 @router.patch("/{campaign_id}/scenes/{scene_id}/scene-image", status_code=204)
@@ -2328,12 +2406,47 @@ Output ONLY valid JSON with exactly this structure (no markdown fences, no extra
       "new_status": "resolved",
       "reason": "One sentence"
     }
+  ],
+  "new_npcs": [
+    {
+      "name": "Character name",
+      "role": "Their role or occupation",
+      "gender": "inferred gender",
+      "age": "inferred age or age range",
+      "appearance": "physical description in 1 sentence",
+      "personality": "personality in 1 sentence",
+      "relationship_to_player": "how they relate to the player character",
+      "current_location": "where they are",
+      "current_state": "their current situation",
+      "short_term_goal": "what they want right now",
+      "long_term_goal": "their deeper ambition",
+      "significance": "One sentence explaining why this character warrants a world document entry"
+    }
+  ],
+  "new_locations": [
+    {
+      "name": "Location name",
+      "description": "What this place is in 1-2 sentences",
+      "current_state": "current situation of this place",
+      "significance": "One sentence explaining why this location warrants a world document entry"
+    }
   ]
 }
 
 For npc_updates, field must be one of: current_state, is_alive, current_location.
 For thread_updates, new_status must be one of: resolved, dormant.
-Return empty arrays for any category with no clear changes."""
+
+For new_npcs — ONLY include a character if ALL of the following apply:
+- They have a name (not just "a guard" or "a merchant")
+- They spoke dialogue, took action that affected the player, OR are established as a recurring presence
+- They are NOT already in the existing NPCs list
+
+For new_locations — ONLY include a location if:
+- It was meaningfully described or explored (not just mentioned in passing)
+- It is NOT already in the world document
+- The player is likely to return there OR it significantly shaped the scene
+
+Return empty arrays for any category with no qualifying entries."""
 
 
 @router.post("/{campaign_id}/scenes/{scene_id}/suggest-summary")
@@ -2411,6 +2524,7 @@ def suggest_world_updates(campaign_id: str, scene_id: str):
 
     npcs = _npcs().get_all(campaign_id)
     threads = _threads().get_all(campaign_id)
+    places = _places().get_all(campaign_id)
 
     # Build world state snapshot for context
     npc_lines = [
@@ -2423,14 +2537,22 @@ def suggest_world_updates(campaign_id: str, scene_id: str):
         f"• {t.title} (id={t.id}) [{t.status.value}]: {t.description}"
         for t in threads
     ]
+    place_lines = [
+        f"• {p.name}: {p.description}"
+        for p in places
+    ]
+    # Exclude silent continue nudges from transcript
+    visible_turns = [t for t in scene.turns if t.content != "(Continue the story.)"]
     transcript_lines = [
         f"[{'Player' if t.role == 'user' else 'Narrator'}]: {t.content}"
-        for t in scene.turns
+        for t in visible_turns
     ]
 
     parts = []
     if npc_lines:
-        parts.append("[CURRENT NPCs]\n" + "\n".join(npc_lines))
+        parts.append("[CURRENT NPCs — do not re-propose these]\n" + "\n".join(npc_lines))
+    if place_lines:
+        parts.append("[CURRENT LOCATIONS — do not re-propose these]\n" + "\n".join(place_lines))
     if thread_lines:
         parts.append("[ACTIVE NARRATIVE THREADS]\n" + "\n".join(thread_lines))
     if scene.confirmed_summary:
@@ -2451,7 +2573,7 @@ def suggest_world_updates(campaign_id: str, scene_id: str):
                 {"role": "user", "content": prompt},
             ],
             "stream": False,
-            "options": {"temperature": 0.3, "num_predict": 2048, "num_ctx": 8192},
+            "options": {"temperature": 0.3, "num_predict": 4096, "num_ctx": config.context_window},
         }
         r = httpx.post(
             f"{config.ollama_base_url.rstrip('/')}/api/chat",
@@ -2472,6 +2594,8 @@ def suggest_world_updates(campaign_id: str, scene_id: str):
         "npc_updates": data.get("npc_updates", []),
         "new_facts": data.get("new_facts", []),
         "thread_updates": data.get("thread_updates", []),
+        "new_npcs": data.get("new_npcs", []),
+        "new_locations": data.get("new_locations", []),
     }
 
 

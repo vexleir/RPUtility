@@ -82,7 +82,56 @@
           </span>
         </label>
       </div>
-      <div style="display:flex;gap:12px;margin-top:8px">
+      <!-- ── Quick-add: New NPC ───────────────────────────────────── -->
+      <details class="scene-quickadd" id="qa-npc">
+        <summary class="scene-quickadd-summary">+ Add New NPC to World</summary>
+        <div class="scene-quickadd-body">
+          <div class="scene-qa-generate-row">
+            <textarea id="qa-npc-desc" class="wb-field scene-qa-input" rows="2"
+              placeholder="Describe this NPC and let the AI fill in the details… e.g. 'A scarred mercenary captain who owes a debt to the player'"></textarea>
+            <button class="btn btn-sm" onclick="qaGenerateNpc()" id="qa-npc-gen-btn" title="AI-fill fields from description">✨</button>
+          </div>
+          <span id="qa-npc-gen-status" class="muted" style="font-size:0.8rem"></span>
+          <div class="wb-grid-2" style="margin-top:8px">
+            <div class="form-group"><label>Name <span class="dim">*</span></label><input type="text" class="wb-field" id="qa-npc-name"></div>
+            <div class="form-group"><label>Role</label><input type="text" class="wb-field" id="qa-npc-role"></div>
+          </div>
+          <div class="wb-grid-2">
+            <div class="form-group"><label>Gender</label><input type="text" class="wb-field" id="qa-npc-gender"></div>
+            <div class="form-group"><label>Age</label><input type="text" class="wb-field" id="qa-npc-age"></div>
+          </div>
+          <div class="form-group"><label>Appearance</label><textarea class="wb-field" id="qa-npc-appearance" rows="2"></textarea></div>
+          <div class="form-group"><label>Personality</label><textarea class="wb-field" id="qa-npc-personality" rows="2"></textarea></div>
+          <button class="btn btn-primary btn-sm" onclick="qaAddNpc()" style="margin-top:4px">Add NPC to World & Scene</button>
+          <span id="qa-npc-status" class="muted" style="font-size:0.8rem;margin-left:8px"></span>
+        </div>
+      </details>
+
+      <!-- ── Quick-add: New Location ──────────────────────────────── -->
+      <details class="scene-quickadd" id="qa-location">
+        <summary class="scene-quickadd-summary">+ Add New Location to World</summary>
+        <div class="scene-quickadd-body">
+          <div class="form-group"><label>Name <span class="dim">*</span></label><input type="text" class="wb-field" id="qa-loc-name" placeholder="e.g. The Shattered Vault"></div>
+          <div class="form-group"><label>Description</label><textarea class="wb-field" id="qa-loc-desc" rows="2" placeholder="What is this place?"></textarea></div>
+          <div class="form-group"><label>Current State <span class="dim">(optional)</span></label><input type="text" class="wb-field" id="qa-loc-state" placeholder="e.g. Abandoned, under siege, bustling"></div>
+          <button class="btn btn-primary btn-sm" onclick="qaAddLocation()">Add Location to World & Set as Scene Location</button>
+          <span id="qa-loc-status" class="muted" style="font-size:0.8rem;margin-left:8px"></span>
+        </div>
+      </details>
+
+      <!-- ── Quick-add: World Facts ────────────────────────────────── -->
+      <details class="scene-quickadd" id="qa-facts">
+        <summary class="scene-quickadd-summary">+ Add World Facts</summary>
+        <div class="scene-quickadd-body">
+          <p class="muted" style="font-size:0.85rem;margin-bottom:8px">One fact per line. These will be added to the world document and will be visible to the AI during this scene.</p>
+          <textarea class="wb-field" id="qa-facts-input" rows="4"
+            placeholder="e.g.&#10;The city guard is secretly corrupt&#10;There is a bounty on shapeshifters&#10;The old bridge was destroyed three years ago"></textarea>
+          <button class="btn btn-primary btn-sm" onclick="qaAddFacts()" style="margin-top:6px">Add Facts to World</button>
+          <span id="qa-facts-status" class="muted" style="font-size:0.8rem;margin-left:8px"></span>
+        </div>
+      </details>
+
+      <div style="display:flex;gap:12px;margin-top:16px">
         <button class="btn btn-primary" onclick="beginScene()" style="flex:1;justify-content:center">Begin Scene →</button>
         <a id="cancel-setup-link" href="/" class="btn" style="text-decoration:none">Cancel</a>
       </div>
@@ -205,6 +254,16 @@
         <div id="wu-threads-section" class="hidden" style="margin-top:16px">
           <h4 style="margin-bottom:8px">Narrative Thread Updates</h4>
           <div id="wu-threads-list"></div>
+        </div>
+        <div id="wu-new-npcs-section" class="hidden" style="margin-top:16px">
+          <h4 style="margin-bottom:6px">New Characters</h4>
+          <p class="muted" style="font-size:0.82rem;margin-bottom:8px">Characters who appeared in this scene and may warrant a world document entry. Uncheck any that are minor or unimportant.</p>
+          <div id="wu-new-npcs-list"></div>
+        </div>
+        <div id="wu-new-locations-section" class="hidden" style="margin-top:16px">
+          <h4 style="margin-bottom:6px">New Locations</h4>
+          <p class="muted" style="font-size:0.82rem;margin-bottom:8px">Locations visited or described in this scene that may warrant a world document entry.</p>
+          <div id="wu-new-locations-list"></div>
         </div>
         <div id="wu-none-msg" class="hidden muted" style="text-align:center;padding:24px 0">
           No world document updates detected for this scene.
