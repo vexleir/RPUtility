@@ -8,6 +8,7 @@ No extraction happens — the player confirms what is canon.
 
 from __future__ import annotations
 
+import re as _re
 from collections import defaultdict
 
 # Maximum chronicle entries sent to AI. When the total exceeds this, we keep
@@ -17,6 +18,41 @@ from collections import defaultdict
 _CHRON_ANCHOR = 2
 _CHRON_TAIL = 6
 _CHRON_THRESHOLD = _CHRON_ANCHOR + _CHRON_TAIL   # below this → send all
+
+# Rolling scene summary: if a scene has more than this many turns, keep only
+# the most recent _SCENE_TURNS_KEEP turns verbatim and add a header noting
+# how many earlier exchanges occurred.
+_SCENE_TURNS_THRESHOLD = 40
+_SCENE_TURNS_KEEP = 30
+
+# How many recent turns to scan for keyword-triggered world facts.
+_KEYWORD_SCAN_TURNS = 8
+
+# Strip [Turn N] / [Turn N-M] labels the summary AI adds for human review.
+# They are useful during editing but waste tokens in the AI context.
+_TURN_LABEL_RE = _re.compile(r"^\s*-?\s*\[Turn\s+\d+(?:[–\-]\d+)?\]\s*", _re.IGNORECASE | _re.MULTILINE)
+
+
+def _compress_chronicle(text: str) -> str:
+    """Remove [Turn N] prefixes from a confirmed chronicle entry before injecting into context."""
+    return _TURN_LABEL_RE.sub("- ", text).strip()
+
+
+def _fact_is_active(fact, recent_text: str) -> bool:
+    """
+    Return True if this fact should be included in the current system prompt.
+    - Critical facts: always included.
+    - Facts with no trigger keywords: always included (unless background priority).
+    - Background facts with no triggers: excluded (only appear when triggered).
+    - Facts with trigger keywords: included only if any keyword appears in recent_text.
+    """
+    if fact.priority == "critical":
+        return True
+    if not fact.trigger_keywords:
+        # Background facts without triggers are too general — skip them unless
+        # nothing else fires. For now: normal = always, background = skip unless triggered.
+        return fact.priority != "background"
+    return any(kw.lower() in recent_text for kw in fact.trigger_keywords)
 
 
 def build_scene_messages(
@@ -41,20 +77,41 @@ def build_scene_messages(
 
     Structure:
       [system]  — world document + chronicle + scene context
-      [user/assistant alternating history from scene.turns]
+      [user/assistant alternating history from scene.turns, possibly truncated]
       [user]    — current player input
     """
+    # Build recent-text for keyword matching (last N turns + current message)
+    recent_turns = scene.turns[-_KEYWORD_SCAN_TURNS:] if scene else []
+    recent_text = " ".join(t.content.lower() for t in recent_turns) + " " + user_message.lower()
+
     system = _build_system(campaign, player_character, world_facts,
                            npcs_in_scene, active_threads, chronicle,
                            places, factions, npc_relationships, scene,
                            all_world_npcs=all_world_npcs,
-                           allow_unselected_npcs=allow_unselected_npcs)
+                           allow_unselected_npcs=allow_unselected_npcs,
+                           recent_text=recent_text)
 
     messages: list[dict] = [{"role": "system", "content": system}]
 
-    # History (all previous turns in this scene)
-    for turn in scene.turns:
-        messages.append({"role": turn.role, "content": turn.content})
+    # ── Rolling scene summary ────────────────────────────────────────────────
+    # If the scene has accumulated many turns, keep only the most recent
+    # _SCENE_TURNS_KEEP verbatim and add a brief header for the rest.
+    turns = scene.turns if scene else []
+    if len(turns) > _SCENE_TURNS_THRESHOLD:
+        omitted = len(turns) - _SCENE_TURNS_KEEP
+        recent = turns[-_SCENE_TURNS_KEEP:]
+        messages.append({
+            "role": "system",
+            "content": (
+                f"[Earlier in this scene — {omitted} exchanges preceded the visible history below. "
+                "Continue naturally from where the conversation picks up.]"
+            ),
+        })
+        for turn in recent:
+            messages.append({"role": turn.role, "content": turn.content})
+    else:
+        for turn in turns:
+            messages.append({"role": turn.role, "content": turn.content})
 
     # Current player input
     if user_name and user_name.lower() not in ("player", "user", ""):
@@ -79,6 +136,7 @@ def _build_system(
     *,
     all_world_npcs: list = [],
     allow_unselected_npcs: bool = False,
+    recent_text: str = "",
 ) -> str:
     parts: list[str] = []
 
@@ -110,22 +168,37 @@ def _build_system(
 
     parts.append("\n".join(role_lines))
 
-    # ── World facts (grouped by category) ─────────────────────────────────────
-    fact_texts = [f for f in world_facts if f.content]
+    # ── World facts (priority-sorted, keyword-filtered) ───────────────────────
+    fact_texts = [f for f in world_facts if f.content and _fact_is_active(f, recent_text)]
     if fact_texts:
-        # Group by category; uncategorised facts go under "" (rendered without header)
-        grouped: dict[str, list[str]] = defaultdict(list)
+        # Critical facts first, then normal, then background (in case any background
+        # facts passed the keyword trigger check)
+        priority_order = {"critical": 0, "normal": 1, "background": 2}
+        fact_texts.sort(key=lambda f: priority_order.get(f.priority, 1))
+
+        # Group by category
+        grouped: dict[str, list] = defaultdict(list)
         for f in fact_texts:
             cat = (f.category or "").strip()
-            grouped[cat].append(f.content)
+            grouped[cat].append(f)
 
         fact_block_lines = ["[WORLD FACTS]"]
-        # Uncategorised first, then alphabetical categories
+        # Critical facts always at top under a CRITICAL marker
+        critical = [f for f in fact_texts if f.priority == "critical"]
+        if critical:
+            fact_block_lines.append("  [CRITICAL — always true]")
+            for f in critical:
+                fact_block_lines.append(f"• {f.content}")
+
+        # Remaining facts grouped by category
         for cat in sorted(grouped.keys(), key=lambda c: ("" if not c else c.lower())):
+            cat_facts = [f for f in grouped[cat] if f.priority != "critical"]
+            if not cat_facts:
+                continue
             if cat:
                 fact_block_lines.append(f"  [{cat.upper()}]")
-            for text in grouped[cat]:
-                fact_block_lines.append(f"• {text}")
+            for f in cat_facts:
+                fact_block_lines.append(f"• {f.content}")
 
         parts.append("\n".join(fact_block_lines))
 
@@ -133,17 +206,15 @@ def _build_system(
     if magic:
         parts.append(f"[MAGIC / TECHNOLOGY]\n{magic}")
 
-    # ── Chronicle (smart recap — anchor + recent tail) ────────────────────────
+    # ── Chronicle (smart recap — anchor + recent tail, turn labels stripped) ──
     confirmed = [e for e in chronicle if e.content]
     if confirmed:
         confirmed_sorted = sorted(confirmed, key=lambda x: x.scene_range_start)
         if len(confirmed_sorted) <= _CHRON_THRESHOLD:
             recap = confirmed_sorted
         else:
-            # Keep the first ANCHOR entries and the last TAIL entries
             anchor = confirmed_sorted[:_CHRON_ANCHOR]
             tail = confirmed_sorted[-_CHRON_TAIL:]
-            # Avoid overlap
             anchor_ids = {e.id for e in anchor}
             tail = [e for e in tail if e.id not in anchor_ids]
             recap = anchor + tail
@@ -158,7 +229,7 @@ def _build_system(
                 label = f"Scene {e.scene_range_start}"
             else:
                 label = f"Scenes {e.scene_range_start}–{e.scene_range_end}"
-            chron_lines.append(f"[{label}] {e.content}")
+            chron_lines.append(f"[{label}]\n{_compress_chronicle(e.content)}")
         parts.append("\n".join(chron_lines))
 
     # ── Player character ──────────────────────────────────────────────────────
@@ -170,7 +241,6 @@ def _build_system(
         if pc.background:    pc_lines.append(f"Background: {pc.background}")
         if pc.wants:         pc_lines.append(f"Wants: {pc.wants}")
         if pc.fears:         pc_lines.append(f"Fears: {pc.fears}")
-        # Development log — most recent 3 entries as context
         if pc.dev_log:
             recent = pc.dev_log[-3:]
             pc_lines.append("Recent development:")
@@ -184,31 +254,52 @@ def _build_system(
         npc_block = ["[NPCs IN THIS SCENE]"]
         pc_name = player_character.name if player_character else "player"
         for n in npcs_in_scene:
-            # Status label
+            # Resolve active form vs base form
+            active_form = _get_active_form(n)
+
             status_str = ""
             if hasattr(n, "status") and n.status and n.status != "active":
                 status_str = f" [{n.status.upper()}]"
                 if hasattr(n, "status_reason") and n.status_reason:
                     status_str += f" ({n.status_reason})"
 
-            line = f"• {n.name}{status_str}"
+            form_label = f" [{active_form.label}]" if active_form else ""
+            line = f"• {n.name}{status_str}{form_label}"
             if n.role:          line += f" ({n.role})"
-            if n.personality:   line += f" — {n.personality}"
-            if n.current_state: line += f" | Currently: {n.current_state}"
+
+            # Use active form's appearance/personality if set, else base
+            appearance  = active_form.appearance  if active_form and active_form.appearance  else n.appearance
+            personality = active_form.personality if active_form and active_form.personality else n.personality
+            curr_state  = active_form.current_state if active_form and active_form.current_state else n.current_state
+
+            if personality:   line += f" — {personality}"
+            if curr_state:    line += f" | Currently: {curr_state}"
             npc_block.append(line)
+
+            # If in a different form, note original identity
+            if active_form:
+                orig_parts = []
+                if n.appearance:  orig_parts.append(f"appearance: {n.appearance}")
+                if n.personality: orig_parts.append(f"personality: {n.personality}")
+                if orig_parts:
+                    npc_block.append(f"  Original form: {'; '.join(orig_parts)}")
+
+            if appearance and appearance != (active_form.appearance if active_form else ""):
+                pass  # already shown via personality line above
+
             if n.relationship_to_player:
                 npc_block.append(f"  Relationship to {pc_name}: {n.relationship_to_player}")
-            # Goals (visible to AI; not necessarily to player)
+            if hasattr(n, "history_with_player") and n.history_with_player:
+                npc_block.append(f"  History: {n.history_with_player}")
             if hasattr(n, "short_term_goal") and n.short_term_goal:
                 npc_block.append(f"  Immediate goal: {n.short_term_goal}")
             if hasattr(n, "long_term_goal") and n.long_term_goal:
                 npc_block.append(f"  Long-term goal: {n.long_term_goal}")
-            # Secrets (AI-only; never shown in UI)
             if hasattr(n, "secrets") and n.secrets:
                 npc_block.append(f"  [Hidden: {n.secrets}]")
         parts.append("\n".join(npc_block))
 
-    # ── Other world NPCs available to be incorporated (when flag is set) ────
+    # ── Other world NPCs available (when flag is set) ────────────────────────
     if allow_unselected_npcs and all_world_npcs:
         scene_npc_ids = {n.id for n in npcs_in_scene}
         available = [n for n in all_world_npcs if n.id not in scene_npc_ids]
@@ -221,13 +312,16 @@ def _build_system(
                 status_str = ""
                 if hasattr(n, "status") and n.status and n.status != "active":
                     status_str = f" [{n.status.upper()}]"
-                line = f"• {n.name}{status_str}"
+                active_form = _get_active_form(n)
+                form_label = f" [{active_form.label}]" if active_form else ""
+                line = f"• {n.name}{status_str}{form_label}"
                 if n.role:        line += f" ({n.role})"
-                if n.personality: line += f" — {n.personality}"
+                personality = active_form.personality if active_form and active_form.personality else n.personality
+                if personality: line += f" — {personality}"
                 avail_block.append(line)
             parts.append("\n".join(avail_block))
 
-    # ── NPC-to-NPC relationships (only between NPCs present in this scene) ───
+    # ── NPC-to-NPC relationships ──────────────────────────────────────────────
     if npc_relationships:
         npc_map = {n.id: n.name for n in npcs_in_scene}
         rel_lines = ["[NPC DYNAMICS]"]
@@ -269,7 +363,7 @@ def _build_system(
                 faction_block.append(f"  History with player: {f.relationship_notes}")
         parts.append("\n".join(faction_block))
 
-    # ── Active narrative threads ───────────────────────────────────────────────
+    # ── Active narrative threads ──────────────────────────────────────────────
     if active_threads:
         thread_block = ["[ACTIVE NARRATIVE THREADS]"]
         for t in active_threads:
@@ -289,3 +383,15 @@ def _build_system(
         parts.append("\n".join(scene_lines))
 
     return "\n\n".join(parts)
+
+
+def _get_active_form(npc):
+    """Return the NpcForm object for the NPC's active_form, or None if on base form."""
+    if not hasattr(npc, "active_form") or not npc.active_form:
+        return None
+    if not hasattr(npc, "forms") or not npc.forms:
+        return None
+    for form in npc.forms:
+        if form.label == npc.active_form:
+            return form
+    return None

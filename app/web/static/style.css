@@ -1930,3 +1930,34 @@ mark.search-highlight {
   cursor: zoom-in;
 }
 
+
+/* NPC forms list in NPC modal */
+.npc-forms-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.npc-form-entry {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 10px; font-size: 13px;
+}
+.npc-form-label { font-weight: 600; min-width: 80px; flex-shrink: 0; }
+.npc-form-meta { flex: 1; color: var(--text-muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.npc-form-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+/* World fact priority badge */
+.fact-priority-badge {
+  display: inline-block; font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.05em;
+  padding: 1px 6px; border-radius: 3px; vertical-align: middle;
+}
+.fact-priority-critical { background: #7f1d1d; color: #fca5a5; }
+.fact-priority-normal   { background: var(--surface2); color: var(--text-muted); }
+.fact-priority-background { background: #1a2535; color: #64748b; }
+
+/* Keyword tags on world facts */
+.fact-keyword-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.fact-keyword-tag {
+  font-size: 11px; padding: 1px 8px; border-radius: 12px;
+  background: var(--surface2); border: 1px solid var(--accent-dim); color: var(--accent-light);
+}
+
+/* wu entity detail (history/form transition text) */
+.wu-entity-detail { font-size: 12px; color: var(--text-muted); margin: 2px 0; font-style: italic; }

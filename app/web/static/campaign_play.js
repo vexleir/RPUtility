@@ -966,6 +966,8 @@ async function loadWorldUpdateSuggestions() {
   document.getElementById("wu-threads-section").classList.add("hidden");
   document.getElementById("wu-new-npcs-section").classList.add("hidden");
   document.getElementById("wu-new-locations-section").classList.add("hidden");
+  document.getElementById("wu-history-section").classList.add("hidden");
+  document.getElementById("wu-forms-section").classList.add("hidden");
   document.getElementById("wu-none-msg").classList.add("hidden");
   footer.style.display = "none";
 
@@ -988,8 +990,10 @@ async function loadWorldUpdateSuggestions() {
   footer.style.display = "";
 
   const { npc_updates = [], new_facts = [], thread_updates = [], new_npcs = [], new_locations = [],
+          history_updates = [], form_transitions = [],
           _model, _parse_ok, _raw } = _pendingSuggestions;
-  const hasAny = npc_updates.length || new_facts.length || thread_updates.length || new_npcs.length || new_locations.length;
+  const hasAny = npc_updates.length || new_facts.length || thread_updates.length || new_npcs.length
+    || new_locations.length || history_updates.length || form_transitions.length;
 
   if (!hasAny) {
     const noneEl = document.getElementById("wu-none-msg");
@@ -1063,6 +1067,32 @@ async function loadWorldUpdateSuggestions() {
           <strong>${escHtml(l.name)}</strong>
           ${l.description ? `<div class="wu-entity-detail">${escHtml(l.description)}</div>` : ""}
           <div class="wu-reason muted">${escHtml(l.significance || "")}</div>
+        </div>
+      </label>`).join("");
+  }
+
+  if (history_updates.length) {
+    document.getElementById("wu-history-section").classList.remove("hidden");
+    document.getElementById("wu-history-list").innerHTML = history_updates.map((h, i) => `
+      <label class="wu-item">
+        <input type="checkbox" class="wu-history-cb" data-index="${i}" checked>
+        <div class="wu-item-text">
+          <strong>${escHtml(h.npc_name)}</strong> — history update
+          <div class="wu-entity-detail">${escHtml(h.new_history)}</div>
+          <div class="wu-reason muted">${escHtml(h.reason || "")}</div>
+        </div>
+      </label>`).join("");
+  }
+
+  if (form_transitions.length) {
+    document.getElementById("wu-forms-section").classList.remove("hidden");
+    document.getElementById("wu-forms-list").innerHTML = form_transitions.map((t, i) => `
+      <label class="wu-item">
+        <input type="checkbox" class="wu-form-cb" data-index="${i}" checked>
+        <div class="wu-item-text">
+          <strong>${escHtml(t.npc_name)}</strong> — active form →
+          <span class="wu-new">${escHtml(t.new_active_form || "(base)")}</span>
+          <div class="wu-reason muted">${escHtml(t.reason || "")}</div>
         </div>
       </label>`).join("");
   }
@@ -1148,7 +1178,8 @@ async function applyWorldUpdates() {
   applyBtn.disabled = true;
   applyBtn.textContent = "Applying…";
 
-  const { npc_updates = [], new_facts = [], thread_updates = [], new_npcs = [], new_locations = [] } = _pendingSuggestions;
+  const { npc_updates = [], new_facts = [], thread_updates = [], new_npcs = [], new_locations = [],
+          history_updates = [], form_transitions = [] } = _pendingSuggestions;
 
   // Apply checked NPC updates
   const checkedNpcs = [...document.querySelectorAll(".wu-npc-cb:checked")].map(cb => npc_updates[+cb.dataset.index]);
@@ -1224,6 +1255,30 @@ async function applyWorldUpdates() {
         description: l.description || "",
         current_state: l.current_state || "",
       }),
+    }).catch(() => {});
+  }
+
+  // Apply checked history updates
+  const checkedHistory = [...document.querySelectorAll(".wu-history-cb:checked")].map(cb => history_updates[+cb.dataset.index]);
+  for (const h of checkedHistory) {
+    const npc = _npcs.find(n => n.id === h.npc_id);
+    if (!npc) continue;
+    await fetch(`/api/campaigns/${CAMPAIGN_ID}/npcs`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...npc, history_with_player: h.new_history }),
+    }).catch(() => {});
+  }
+
+  // Apply checked form transitions
+  const checkedForms = [...document.querySelectorAll(".wu-form-cb:checked")].map(cb => form_transitions[+cb.dataset.index]);
+  for (const t of checkedForms) {
+    const npc = _npcs.find(n => n.id === t.npc_id);
+    if (!npc) continue;
+    await fetch(`/api/campaigns/${CAMPAIGN_ID}/npcs`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...npc, active_form: t.new_active_form || null }),
     }).catch(() => {});
   }
 

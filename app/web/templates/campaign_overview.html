@@ -257,10 +257,53 @@
           <input type="text" id="fact-edit-category" style="width:100%;box-sizing:border-box"
             placeholder="Leave blank for general">
         </div>
+        <div class="form-group">
+          <label>Priority</label>
+          <select id="fact-edit-priority" style="width:100%;box-sizing:border-box" class="wb-field">
+            <option value="critical">🔴 Critical — always injected, shown first</option>
+            <option value="normal" selected>🟡 Normal — always injected</option>
+            <option value="background">⚪ Background — only when keywords match</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Trigger Keywords <span class="dim">(comma-separated — inject only when these appear in conversation)</span></label>
+          <input type="text" id="fact-edit-keywords" style="width:100%;box-sizing:border-box"
+            placeholder="e.g. dragon, collar, Oren  (leave blank to always inject)">
+          <p class="form-hint" style="margin-top:4px">Background facts only appear in context when a keyword is mentioned. Normal/Critical facts always appear.</p>
+        </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-primary" onclick="saveFactEdit()">Save</button>
         <button class="btn" onclick="closeModal('fact-edit-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add NPC Form modal -->
+  <div id="npc-form-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:520px">
+      <div class="modal-header">
+        <span>Add / Edit Form</span>
+        <button class="modal-close" onclick="closeModal('npc-form-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="npc-form-edit-index">
+        <div class="form-group">
+          <label>Form Label <span class="dim">(e.g. Wolf Form, Corrupted, True Form, Disguise)</span></label>
+          <input type="text" class="wb-field" id="npc-form-label" placeholder="Wolf Form">
+        </div>
+        <div class="form-group"><label>Appearance in this form</label><textarea class="wb-field" id="npc-form-appearance" rows="2" placeholder="Physical description while in this form…"></textarea></div>
+        <div class="form-group"><label>Personality in this form</label><textarea class="wb-field" id="npc-form-personality" rows="2" placeholder="How they think and act in this form…"></textarea></div>
+        <div class="form-group"><label>Current State in this form</label><input type="text" class="wb-field" id="npc-form-state" placeholder="e.g. hunting, dormant, enraged"></div>
+        <div class="form-group">
+          <label>Scene Introduced <span class="dim">(optional scene number)</span></label>
+          <input type="number" class="wb-field" id="npc-form-scene" min="0" placeholder="0">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="npc-form-delete-btn" class="btn btn-danger" onclick="deleteNpcForm()" style="margin-right:auto;display:none">Delete</button>
+        <button class="btn btn-primary" onclick="saveNpcForm()">Save Form</button>
+        <button class="btn" onclick="closeModal('npc-form-modal')">Cancel</button>
       </div>
     </div>
   </div>
@@ -333,6 +376,22 @@
         <div class="form-group"><label>Short-term Goal <span class="dim">(AI-visible)</span></label><input type="text" class="wb-field" id="npc-short-goal"></div>
         <div class="form-group"><label>Long-term Goal <span class="dim">(AI-visible)</span></label><input type="text" class="wb-field" id="npc-long-goal"></div>
         <div class="form-group"><label>Secrets <span class="dim">(AI-only, never shown in UI)</span></label><textarea class="wb-field" id="npc-secrets" rows="2"></textarea></div>
+        <div class="form-group"><label>History with Player <span class="dim">(relationship log — AI-visible)</span></label><textarea class="wb-field" id="npc-history" rows="2" placeholder="Accumulated relationship history across scenes…"></textarea></div>
+
+        <!-- Forms / Transformations -->
+        <div class="npc-forms-section" style="margin-top:14px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <label style="margin:0;font-weight:600">Forms &amp; Transformations</label>
+            <button class="btn btn-sm" type="button" onclick="openAddNpcForm()">+ Add Form</button>
+          </div>
+          <div style="margin-bottom:8px;display:flex;align-items:center;gap:8px">
+            <label style="margin:0;font-size:0.85rem;color:var(--text-muted)">Active form:</label>
+            <select class="wb-field" id="npc-active-form" style="flex:1;font-size:0.85rem">
+              <option value="">Base form (default)</option>
+            </select>
+          </div>
+          <div id="npc-forms-list" class="npc-forms-list"></div>
+        </div>
 
         <!-- Dev log -->
         <div class="dev-log-section" style="margin-top:12px">
@@ -677,6 +736,12 @@
           <input type="range" id="cs-seed" min="-1" max="999999999" step="1" value="-1" oninput="csSync('seed',this.value,0)">
           <div class="gen-setting-bounds"><span>-1 (random)</span><span>999 999 999</span></div>
           <p class="form-hint">-1 uses a random seed every response (recommended for normal play). Set a fixed number to make the AI produce the same output for the same input — useful for testing or recreating a specific response. Any number works; the value itself doesn't matter.</p>
+        </div>
+        <div class="gen-setting-row">
+          <div class="gen-setting-label"><span>Context Window</span><span class="gen-setting-value" id="cs-lbl-context_window">32768</span></div>
+          <input type="range" id="cs-context_window" min="4096" max="131072" step="4096" value="32768" oninput="csSync('context_window',this.value,0)">
+          <div class="gen-setting-bounds"><span>4 096</span><span>131 072</span></div>
+          <p class="form-hint">Maximum number of tokens loaded into the AI's memory at once (context window size). Increase this if the AI loses track of earlier conversation — the default 32 768 handles roughly 50–80 turns. Must not exceed your model's actual context limit (check the model card). Higher values use significantly more VRAM.</p>
         </div>
       </div>
       <div class="modal-footer">

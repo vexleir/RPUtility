@@ -14,7 +14,7 @@ from app.core.models import (
     PlayerCharacter, PcDevEntry,
     CampaignWorldFact,
     CampaignPlace,
-    NpcCard, NpcStatus, NpcDevEntry,
+    NpcCard, NpcStatus, NpcDevEntry, NpcForm,
     NpcRelationship,
     NarrativeThread, ThreadStatus,
     CampaignScene, SceneTurn,
@@ -172,8 +172,10 @@ class WorldFactStore:
         with get_connection(self._db) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO campaign_world_facts "
-                "(id,campaign_id,content,category,fact_order,created_at) VALUES (?,?,?,?,?,?)",
+                "(id,campaign_id,content,category,priority,trigger_keywords,fact_order,created_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
                 (fact.id, fact.campaign_id, fact.content, fact.category,
+                 fact.priority, json_encode(fact.trigger_keywords),
                  fact.fact_order, fact.created_at.isoformat()),
             )
 
@@ -181,8 +183,9 @@ class WorldFactStore:
         for f in facts:
             self.save(f)
 
-    def update(self, fact_id: str, content: str | None = None, category: str | None = None) -> CampaignWorldFact | None:
-        """Update content and/or category of an individual fact."""
+    def update(self, fact_id: str, content: str | None = None, category: str | None = None,
+               priority: str | None = None, trigger_keywords: list | None = None) -> CampaignWorldFact | None:
+        """Update fields of an individual fact."""
         with get_connection(self._db) as conn:
             row = conn.execute(
                 "SELECT * FROM campaign_world_facts WHERE id=?", (fact_id,)
@@ -194,9 +197,14 @@ class WorldFactStore:
                 fact.content = content
             if category is not None:
                 fact.category = category
+            if priority is not None:
+                fact.priority = priority
+            if trigger_keywords is not None:
+                fact.trigger_keywords = trigger_keywords
             conn.execute(
-                "UPDATE campaign_world_facts SET content=?,category=? WHERE id=?",
-                (fact.content, fact.category, fact_id),
+                "UPDATE campaign_world_facts SET content=?,category=?,priority=?,trigger_keywords=? WHERE id=?",
+                (fact.content, fact.category, fact.priority,
+                 json_encode(fact.trigger_keywords), fact_id),
             )
         return fact
 
@@ -236,10 +244,13 @@ class WorldFactStore:
 
 def _row_to_fact(row) -> CampaignWorldFact:
     keys = row.keys() if hasattr(row, "keys") else []
+    raw_kw = json_decode(row["trigger_keywords"]) if "trigger_keywords" in keys and row["trigger_keywords"] else []
     return CampaignWorldFact(
         id=row["id"], campaign_id=row["campaign_id"],
         content=row["content"],
         category=row["category"] if "category" in keys else "",
+        priority=row["priority"] if "priority" in keys else "normal",
+        trigger_keywords=raw_kw if isinstance(raw_kw, list) else [],
         fact_order=row["fact_order"],
         created_at=datetime.fromisoformat(row["created_at"]),
     )
@@ -310,9 +321,11 @@ class NpcCardStore:
                      gender,age,
                      relationship_to_player,current_location,current_state,
                      is_alive,status,status_reason,secrets,
-                     short_term_goal,long_term_goal,dev_log,portrait_image,
+                     short_term_goal,long_term_goal,
+                     history_with_player,forms,active_form,
+                     dev_log,portrait_image,
                      created_at,updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(id) DO UPDATE SET
                     name=excluded.name, appearance=excluded.appearance,
                     personality=excluded.personality, role=excluded.role,
@@ -325,6 +338,9 @@ class NpcCardStore:
                     secrets=excluded.secrets,
                     short_term_goal=excluded.short_term_goal,
                     long_term_goal=excluded.long_term_goal,
+                    history_with_player=excluded.history_with_player,
+                    forms=excluded.forms,
+                    active_form=excluded.active_form,
                     dev_log=excluded.dev_log,
                     portrait_image=excluded.portrait_image,
                     updated_at=excluded.updated_at
@@ -334,6 +350,9 @@ class NpcCardStore:
                   npc.current_state, int(npc.status != NpcStatus.DEAD),
                   npc.status.value, npc.status_reason, npc.secrets,
                   npc.short_term_goal, npc.long_term_goal,
+                  npc.history_with_player,
+                  json_encode([f.model_dump() for f in npc.forms]),
+                  npc.active_form,
                   json_encode([e.model_dump() for e in npc.dev_log]),
                   npc.portrait_image,
                   npc.created_at.isoformat(), npc.updated_at.isoformat()))
@@ -374,6 +393,8 @@ def _row_to_npc(row) -> NpcCard:
     keys = row.keys() if hasattr(row, "keys") else []
     raw_dev = json_decode(row["dev_log"]) if "dev_log" in keys and row["dev_log"] else []
     dev_log = [NpcDevEntry(**e) if isinstance(e, dict) else e for e in raw_dev]
+    raw_forms = json_decode(row["forms"]) if "forms" in keys and row["forms"] else []
+    forms = [NpcForm(**f) if isinstance(f, dict) else f for f in raw_forms]
     # Determine status: prefer new status column, fall back to is_alive for old rows
     if "status" in keys and row["status"]:
         status = NpcStatus(row["status"])
@@ -391,6 +412,9 @@ def _row_to_npc(row) -> NpcCard:
         secrets=row["secrets"] if "secrets" in keys else "",
         short_term_goal=row["short_term_goal"] if "short_term_goal" in keys else "",
         long_term_goal=row["long_term_goal"] if "long_term_goal" in keys else "",
+        history_with_player=row["history_with_player"] if "history_with_player" in keys else "",
+        forms=forms,
+        active_form=row["active_form"] if "active_form" in keys else None,
         dev_log=dev_log,
         portrait_image=row["portrait_image"] if "portrait_image" in keys else None,
         created_at=datetime.fromisoformat(row["created_at"]),

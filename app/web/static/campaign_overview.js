@@ -487,10 +487,11 @@ async function saveField() {
 // ── World facts ───────────────────────────────────────────────────────────────
 
 function openEditFact(fact) {
-  // fact is null for "Add", or a fact object for "Edit"
   document.getElementById("fact-edit-id").value = fact?.id || "";
   document.getElementById("fact-edit-content").value = fact?.content || "";
   document.getElementById("fact-edit-category").value = fact?.category || "";
+  document.getElementById("fact-edit-priority").value = fact?.priority || "normal";
+  document.getElementById("fact-edit-keywords").value = (fact?.trigger_keywords || []).join(", ");
   document.getElementById("fact-edit-title").textContent = fact ? "Edit World Fact" : "Add World Fact";
   openModal("fact-edit-modal");
 }
@@ -499,6 +500,9 @@ async function saveFactEdit() {
   const id = document.getElementById("fact-edit-id").value;
   const content = document.getElementById("fact-edit-content").value.trim();
   const category = document.getElementById("fact-edit-category").value.trim();
+  const priority = document.getElementById("fact-edit-priority").value;
+  const keywordsRaw = document.getElementById("fact-edit-keywords").value;
+  const trigger_keywords = keywordsRaw.split(",").map(k => k.trim()).filter(Boolean);
   if (!content) { showBanner("Fact text is required.", "warning"); return; }
   closeModal("fact-edit-modal");
 
@@ -508,13 +512,13 @@ async function saveFactEdit() {
       const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/world-facts/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content, category }),
+        body: JSON.stringify({ content, category, priority, trigger_keywords }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const saved = await res.json();
       _facts = _facts.map(f => f.id === id ? saved : f);
     } else {
-      // Add new fact by appending to the bulk list
+      // Add new fact by appending to the bulk list (priority/keywords applied via PATCH after)
       const all = _facts.map(f => f.content).concat([content]);
       const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/world-facts`, {
         method: "PUT",
@@ -523,13 +527,13 @@ async function saveFactEdit() {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       _facts = await res.json();
-      // Apply the category to the new fact (last one)
-      if (category && _facts.length) {
+      // Apply category, priority, keywords to the new fact (last one)
+      if (_facts.length) {
         const newFact = _facts[_facts.length - 1];
         const pRes = await fetch(`/api/campaigns/${CAMPAIGN_ID}/world-facts/${newFact.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ category }),
+          body: JSON.stringify({ category, priority, trigger_keywords }),
         });
         if (pRes.ok) {
           const patched = await pRes.json();
@@ -770,9 +774,13 @@ function openEditNpc(npc, prefill, portrait) {
   document.getElementById("npc-short-goal").value = data.short_term_goal || "";
   document.getElementById("npc-long-goal").value = data.long_term_goal || "";
   document.getElementById("npc-secrets").value = npc?.secrets || "";
+  document.getElementById("npc-history").value = npc?.history_with_player || "";
   document.getElementById("npc-delete-btn").style.display = npc ? "" : "none";
   // Store pending portrait for post-save application
   document.getElementById("npc-modal").__pendingPortrait = portrait || null;
+
+  // Render forms section
+  _renderNpcForms(npc?.forms || [], npc?.active_form || "");
 
   // Render dev log
   const logList = document.getElementById("npc-dev-log-list");
@@ -893,6 +901,9 @@ async function saveNpc() {
     short_term_goal: document.getElementById("npc-short-goal").value.trim(),
     long_term_goal: document.getElementById("npc-long-goal").value.trim(),
     secrets: document.getElementById("npc-secrets").value.trim(),
+    history_with_player: document.getElementById("npc-history").value.trim(),
+    forms: _getNpcFormsFromModal(),
+    active_form: document.getElementById("npc-active-form").value || null,
     is_alive: document.getElementById("npc-status").value !== "dead",
   };
   if (!body.name) { showBanner("NPC name is required.", "warning"); return; }
@@ -928,6 +939,94 @@ async function deleteNpc() {
   _relationships = _relationships.filter(r => r.npc_id_a !== id && r.npc_id_b !== id);
   closeModal("npc-modal");
   renderAll();
+}
+
+// ── NPC Forms management ─────────────────────────────────────────────────────
+
+// Internal state: array of form objects being edited in the NPC modal
+let _modalForms = [];
+
+function _renderNpcForms(forms, activeForm) {
+  _modalForms = forms ? forms.map(f => ({ ...f })) : [];
+
+  // Rebuild active-form dropdown
+  const sel = document.getElementById("npc-active-form");
+  sel.innerHTML = '<option value="">(base form)</option>';
+  _modalForms.forEach(f => {
+    const opt = document.createElement("option");
+    opt.value = f.label;
+    opt.textContent = f.label;
+    sel.appendChild(opt);
+  });
+  sel.value = activeForm || "";
+
+  // Rebuild forms list
+  const list = document.getElementById("npc-forms-list");
+  list.innerHTML = "";
+  _modalForms.forEach((f, i) => {
+    const row = document.createElement("div");
+    row.className = "npc-form-entry";
+    row.innerHTML = `
+      <span class="npc-form-label">${f.label}</span>
+      <span class="npc-form-meta">${f.appearance ? f.appearance.slice(0, 60) + (f.appearance.length > 60 ? "…" : "") : ""}</span>
+      <div class="npc-form-actions">
+        <button type="button" class="btn-sm" onclick="openEditNpcForm(${i})">Edit</button>
+        <button type="button" class="btn-sm btn-danger" onclick="deleteNpcForm(${i})">Delete</button>
+      </div>`;
+    list.appendChild(row);
+  });
+}
+
+function _getNpcFormsFromModal() {
+  return _modalForms.map(f => ({ ...f }));
+}
+
+function openAddNpcForm() {
+  _openNpcFormModal(null);
+}
+
+function openEditNpcForm(index) {
+  _openNpcFormModal(index);
+}
+
+function _openNpcFormModal(index) {
+  const f = index !== null ? _modalForms[index] : null;
+  document.getElementById("npc-form-modal-title").textContent = f ? "Edit Form" : "Add Form";
+  document.getElementById("npc-form-index").value = index !== null ? index : "";
+  document.getElementById("npc-form-label").value = f?.label || "";
+  document.getElementById("npc-form-appearance").value = f?.appearance || "";
+  document.getElementById("npc-form-personality").value = f?.personality || "";
+  document.getElementById("npc-form-state").value = f?.current_state || "";
+  document.getElementById("npc-form-scene").value = f?.scene_introduced ?? "";
+  openModal("npc-form-modal");
+}
+
+function saveNpcForm() {
+  const label = document.getElementById("npc-form-label").value.trim();
+  if (!label) { showBanner("Form label is required.", "warning"); return; }
+  const indexRaw = document.getElementById("npc-form-index").value;
+  const form = {
+    label,
+    appearance: document.getElementById("npc-form-appearance").value.trim(),
+    personality: document.getElementById("npc-form-personality").value.trim(),
+    current_state: document.getElementById("npc-form-state").value.trim(),
+    scene_introduced: document.getElementById("npc-form-scene").value ? parseInt(document.getElementById("npc-form-scene").value) : null,
+  };
+  if (indexRaw !== "") {
+    _modalForms[parseInt(indexRaw)] = form;
+  } else {
+    _modalForms.push(form);
+  }
+  const currentActive = document.getElementById("npc-active-form").value;
+  _renderNpcForms(_modalForms, currentActive);
+  closeModal("npc-form-modal");
+}
+
+function deleteNpcForm(index) {
+  if (!confirm("Delete this form?")) return;
+  _modalForms.splice(index, 1);
+  const currentActive = document.getElementById("npc-active-form").value;
+  _renderNpcForms(_modalForms, currentActive);
 }
 
 // ── NPC Relationship editor ───────────────────────────────────────────────────
@@ -1381,7 +1480,7 @@ function csSync(key, value, decimals) {
 }
 
 function csResetDefaults() {
-  const defaults = { temperature:0.80, top_p:0.95, top_k:0, min_p:0.05, repeat_penalty:1.10, max_tokens:1024, seed:-1 };
+  const defaults = { temperature:0.80, top_p:0.95, top_k:0, min_p:0.05, repeat_penalty:1.10, max_tokens:1024, seed:-1, context_window:32768 };
   for (const [k, v] of Object.entries(defaults)) {
     const el = document.getElementById(`cs-${k}`);
     if (el) { el.value = v; csSync(k, v, ["temperature","top_p","min_p","repeat_penalty"].includes(k) ? 2 : 0); }
@@ -1414,7 +1513,7 @@ async function openEditCampaign() {
 
   // Populate gen settings sliders
   const gs = _campaign?.gen_settings || {};
-  const defaults = { temperature:0.80, top_p:0.95, top_k:0, min_p:0.05, repeat_penalty:1.10, max_tokens:1024, seed:-1 };
+  const defaults = { temperature:0.80, top_p:0.95, top_k:0, min_p:0.05, repeat_penalty:1.10, max_tokens:1024, seed:-1, context_window:32768 };
   for (const [k, def] of Object.entries(defaults)) {
     const v = gs[k] ?? def;
     const el = document.getElementById(`cs-${k}`);
@@ -1437,6 +1536,7 @@ async function saveEditCampaign() {
     repeat_penalty: parseFloat(document.getElementById("cs-repeat_penalty").value),
     max_tokens:     parseInt(document.getElementById("cs-max_tokens").value),
     seed:           parseInt(document.getElementById("cs-seed").value),
+    context_window: parseInt(document.getElementById("cs-context_window").value),
   };
   try {
     const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}`, {

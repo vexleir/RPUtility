@@ -94,6 +94,7 @@ class UpdateCampaignRequest(BaseModel):
     repeat_penalty: Optional[float] = None
     max_tokens: Optional[int] = None
     seed: Optional[int] = None
+    context_window: Optional[int] = None
 
 class SavePlayerCharacterRequest(BaseModel):
     name: str = "The Protagonist"
@@ -136,6 +137,9 @@ class SaveNpcRequest(BaseModel):
     secrets: str = ""
     short_term_goal: str = ""
     long_term_goal: str = ""
+    history_with_player: str = ""
+    forms: list[dict] = []         # list of NpcForm dicts
+    active_form: Optional[str] = None
 
 
 class AppendNpcDevLogRequest(BaseModel):
@@ -253,7 +257,7 @@ def update_campaign(campaign_id: str, req: UpdateCampaignRequest):
         updates["style_guide"] = sg
     if req.notes is not None:
         updates["notes"] = req.notes
-    _GS_FIELDS = ("temperature", "top_p", "top_k", "min_p", "repeat_penalty", "max_tokens", "seed")
+    _GS_FIELDS = ("temperature", "top_p", "top_k", "min_p", "repeat_penalty", "max_tokens", "seed", "context_window")
     if any(getattr(req, f) is not None for f in _GS_FIELDS):
         gs = c.gen_settings
         patch = {f: getattr(req, f) for f in _GS_FIELDS if getattr(req, f) is not None}
@@ -337,12 +341,20 @@ def delete_world_fact(campaign_id: str, fact_id: str):
 class PatchWorldFactRequest(BaseModel):
     content: Optional[str] = None
     category: Optional[str] = None
+    priority: Optional[str] = None          # "critical" | "normal" | "background"
+    trigger_keywords: Optional[list[str]] = None
 
 
 @router.patch("/{campaign_id}/world-facts/{fact_id}")
 def patch_world_fact(campaign_id: str, fact_id: str, req: PatchWorldFactRequest):
-    """Update content and/or category of a single world fact."""
-    updated = _facts().update(fact_id, content=req.content, category=req.category)
+    """Update content, category, priority, and/or trigger keywords of a single world fact."""
+    updated = _facts().update(
+        fact_id,
+        content=req.content,
+        category=req.category,
+        priority=req.priority,
+        trigger_keywords=req.trigger_keywords,
+    )
     if not updated:
         raise HTTPException(404, "Fact not found")
     return _fact_dict(updated)
@@ -407,6 +419,10 @@ def save_npc(campaign_id: str, req: SaveNpcRequest):
         status = NpcStatus.ACTIVE
     if not req.is_alive and status == NpcStatus.ACTIVE:
         status = NpcStatus.DEAD
+    # Parse forms list from request dicts
+    from app.core.models import NpcForm as _NpcForm
+    forms = [_NpcForm(**f) if isinstance(f, dict) else f for f in (req.forms or [])]
+
     n = NpcCard(
         id=req.id if req.id else _new_id(),
         campaign_id=campaign_id,
@@ -424,6 +440,9 @@ def save_npc(campaign_id: str, req: SaveNpcRequest):
         secrets=req.secrets,
         short_term_goal=req.short_term_goal,
         long_term_goal=req.long_term_goal,
+        history_with_player=req.history_with_player,
+        forms=forms,
+        active_form=req.active_form,
         portrait_image=existing.portrait_image if existing else None,
         dev_log=existing.dev_log if existing else [],
         created_at=existing.created_at if existing else datetime.now(UTC).replace(tzinfo=None),
@@ -744,7 +763,7 @@ def scene_regenerate_stream(campaign_id: str, scene_id: str, req: SceneRegenerat
                     "repeat_penalty": repeat_penalty,
                     "num_predict": max_tokens,
                     "seed": seed,
-                    "num_ctx": config.context_window,
+                    "num_ctx": gs.context_window,
                 },
             }
             with httpx.stream(
@@ -2266,7 +2285,7 @@ def scene_open_stream(campaign_id: str, scene_id: str, req: SceneOpenRequest):
                     "repeat_penalty": repeat_penalty,
                     "num_predict": max_tokens,
                     "seed": seed,
-                    "num_ctx": config.context_window,
+                    "num_ctx": gs.context_window,
                 },
             }
             with httpx.stream(
@@ -2290,7 +2309,7 @@ def scene_open_stream(campaign_id: str, scene_id: str, req: SceneOpenRequest):
             yield f"\n\n[Error: {e}]"
             return
 
-        # Persist only the assistant turn (opening prompt is not stored)
+        # Persist only the assistant turn
         scene.turns.append(SceneTurn(role="assistant", content="".join(full_response)))
         scene_store.save(scene)
 
@@ -2378,7 +2397,7 @@ def scene_chat_stream(campaign_id: str, scene_id: str, req: SceneChatRequest):
                     "repeat_penalty": repeat_penalty,
                     "num_predict": max_tokens,
                     "seed": seed,
-                    "num_ctx": config.context_window,
+                    "num_ctx": gs.context_window,
                 },
             }
             with httpx.stream(
@@ -2430,11 +2449,11 @@ Output ONLY the list — no title, no preamble, no closing sentence."""
 
 _SUGGEST_UPDATES_SYSTEM = """Extract world-document entries from a completed roleplay scene.
 
-TASK: Read the transcript and summary, then output a JSON object cataloguing every character, place, and fact worth recording. The player reviews every entry and approves or rejects — err heavily toward including MORE, not less.
+TASK: Read the transcript and summary, then output a JSON object cataloguing every character, place, fact, transformation, and relationship development worth recording. The player reviews every entry and approves or rejects — err heavily toward including MORE, not less.
 
 CRITICAL OUTPUT RULE: Your response must be ONLY the JSON object below. No thinking prose outside the JSON. No markdown. No explanation. Begin your response with { and end with }.
 
-REQUIRED JSON FORMAT (all five keys must be present, use [] if nothing qualifies):
+REQUIRED JSON FORMAT (all seven keys must be present, use [] if nothing qualifies):
 {
   "new_npcs": [
     {"name":"...", "role":"...", "gender":"...", "age":"...", "appearance":"(hair colour, eye colour, build, clothing, distinguishing features)", "personality":"...", "relationship_to_player":"...", "current_location":"...", "current_state":"...", "short_term_goal":"...", "long_term_goal":"...", "secrets":"(hidden backstory, concealed motives, or unknown truths about them)", "significance":"..."}
@@ -2450,23 +2469,33 @@ REQUIRED JSON FORMAT (all five keys must be present, use [] if nothing qualifies
   ],
   "thread_updates": [
     {"thread_id":"exact-uuid", "thread_title":"...", "new_status":"resolved", "reason":"..."}
+  ],
+  "history_updates": [
+    {"npc_id":"exact-uuid", "npc_name":"...", "addition":"one-sentence summary of what happened between this NPC and the player in this scene", "reason":"..."}
+  ],
+  "form_transitions": [
+    {"npc_id":"exact-uuid", "npc_name":"...", "new_form_label":"...", "new_appearance":"...", "new_personality":"...", "new_current_state":"...", "reason":"..."}
   ]
 }
 
 WHAT TO EXTRACT:
 
-new_npcs: Every character who appears in the scene AND is not in the CURRENT NPCs list. Include characters referred to by title ("the innkeeper", "Captain Voss"), unnamed-but-described figures if they seem significant, and any character who speaks, acts, or is described. Do NOT include the player character. Fill every field as completely as possible from the scene — infer hair colour, eye colour, build, and clothing from any descriptions given; infer age range, personality, and goals from dialogue and actions; put backstory, history, and concealed information in "secrets".
+new_npcs: Every character who appears in the scene AND is not in the CURRENT NPCs list. Fill every field as completely as possible — infer appearance and personality from descriptions and dialogue; put concealed backstory in "secrets".
 
 new_locations: Every named or described place visited or mentioned in the scene that is not in the CURRENT LOCATIONS list.
 
 new_facts: Every revelation, secret, lore detail, rule of the world, plot twist, or piece of backstory established in this scene.
 
-npc_updates: Changes to characters already in the CURRENT NPCs list (field must be: current_state, is_alive, or current_location). Match by the exact uuid shown.
+npc_updates: Changes to characters already in the CURRENT NPCs list. Valid fields: current_state, is_alive, current_location. Match by the exact uuid shown.
 
 thread_updates: Narrative threads already in the list that were resolved or went dormant. Match by exact uuid.
 
-EXAMPLE — given a fantasy scene where the player met a blacksmith named Oren who revealed that dragons are controlled by a magical collar, and visited his forge in the Ashveil district, the correct output is:
-{"new_npcs":[{"name":"Oren","role":"Blacksmith","gender":"male","age":"middle-aged, late 40s","appearance":"broad-shouldered man with burn-scarred forearms, close-cropped grey hair, dark eyes, perpetually soot-stained leather apron","personality":"gruff but honest; speaks plainly and distrusts nobility; loyal to those who earn it","relationship_to_player":"informant, cautiously helpful","current_location":"his forge in the Ashveil district","current_state":"running his business, worried about increased dragon activity near the city","short_term_goal":"complete his current sword commission without drawing attention","long_term_goal":"protect his family and get them out of the city before the dragons grow bolder","secrets":"Lost his wife to a dragon attack three years ago; blames the city council for covering it up; knows a hidden route out of the city through the old aqueduct","significance":"Revealed key lore about dragon collars; likely to be a recurring contact"}],"new_locations":[{"name":"Oren's Forge, Ashveil District","description":"A working blacksmith's forge in the Ashveil district of the city.","current_state":"active","significance":"Where the player learned about dragon collars; potential future meeting point"}],"new_facts":[{"content":"Dragons in this world are controlled by magical collars; removing the collar frees them.","reason":"Oren revealed this directly to the player"}],"npc_updates":[],"thread_updates":[]}"""
+history_updates: For any NPC in the CURRENT NPCs list who had a meaningful interaction with the player in this scene — add a brief note to their history. One entry per NPC, one sentence. Only include if something significant happened (trust gained/lost, secret shared, conflict, alliance, etc.).
+
+form_transitions: If any NPC in the CURRENT NPCs list visibly changed their physical form, appearance, or fundamental personality during this scene (transformation, shapeshifting, corruption, revealed disguise, possession, etc.) — record the new form. Leave new_form_label short and descriptive (e.g. "Wolf Form", "Corrupted", "True Form").
+
+EXAMPLE — given a scene where Oren (already in the NPC list) revealed a dragon collar secret to the player, then transformed into a wolf at scene's end, the correct output includes:
+{"new_npcs":[],"new_locations":[],"new_facts":[{"content":"Dragons are controlled by magical collars; removing the collar frees them.","reason":"Oren revealed this to the player"}],"npc_updates":[],"thread_updates":[],"history_updates":[{"npc_id":"oren-uuid","npc_name":"Oren","addition":"Shared the secret of dragon collars with the player, revealing his true nature as a shapeshifter.","reason":"Major trust moment and revelation"}],"form_transitions":[{"npc_id":"oren-uuid","npc_name":"Oren","new_form_label":"Wolf Form","new_appearance":"massive grey wolf, amber eyes, a scar across the left flank","new_personality":"primal, protective, still recognises the player","new_current_state":"transformed, guarding the forge entrance","reason":"Transformed at scene end when threatened"}]}"""
 
 
 class SuggestSummaryRequest(BaseModel):
@@ -2660,16 +2689,19 @@ def suggest_world_updates(campaign_id: str, scene_id: str):
 
     data = _extract_json(raw)
     has_any = any([data.get("npc_updates"), data.get("new_facts"), data.get("thread_updates"),
-                   data.get("new_npcs"), data.get("new_locations")])
+                   data.get("new_npcs"), data.get("new_locations"),
+                   data.get("history_updates"), data.get("form_transitions")])
     parse_ok = bool(data)
 
     log.info(
         "suggest_world_updates: model=%s raw_len=%d parse_ok=%s has_any=%s "
-        "new_npcs=%d new_locations=%d new_facts=%d npc_updates=%d thread_updates=%d",
+        "new_npcs=%d new_locations=%d new_facts=%d npc_updates=%d thread_updates=%d "
+        "history_updates=%d form_transitions=%d",
         model, len(raw), parse_ok, has_any,
         len(data.get("new_npcs", [])), len(data.get("new_locations", [])),
         len(data.get("new_facts", [])), len(data.get("npc_updates", [])),
         len(data.get("thread_updates", [])),
+        len(data.get("history_updates", [])), len(data.get("form_transitions", [])),
     )
     if not parse_ok:
         log.warning("suggest_world_updates: JSON parse FAILED. Raw (first 3000 chars):\n%s", raw[:3000])
@@ -2682,6 +2714,8 @@ def suggest_world_updates(campaign_id: str, scene_id: str):
         "thread_updates": data.get("thread_updates", []),
         "new_npcs": data.get("new_npcs", []),
         "new_locations": data.get("new_locations", []),
+        "history_updates": data.get("history_updates", []),
+        "form_transitions": data.get("form_transitions", []),
         "_model": model,
         "_parse_ok": parse_ok,
         "_raw": raw[:2000],   # first 2000 chars for client-side debug panel
@@ -2758,6 +2792,8 @@ def _fact_dict(f) -> dict:
         "campaign_id": f.campaign_id,
         "content": f.content,
         "category": f.category,
+        "priority": f.priority if hasattr(f, "priority") else "normal",
+        "trigger_keywords": f.trigger_keywords if hasattr(f, "trigger_keywords") else [],
         "fact_order": f.fact_order,
         "created_at": f.created_at.isoformat(),
     }
@@ -2794,6 +2830,9 @@ def _npc_dict(n) -> dict:
         "secrets": n.secrets,
         "short_term_goal": n.short_term_goal,
         "long_term_goal": n.long_term_goal,
+        "history_with_player": n.history_with_player if hasattr(n, "history_with_player") else "",
+        "forms": [f.model_dump() for f in n.forms] if hasattr(n, "forms") else [],
+        "active_form": n.active_form if hasattr(n, "active_form") else None,
         "dev_log": [{"scene_number": e.scene_number, "note": e.note} for e in (n.dev_log or [])],
         "portrait_image": n.portrait_image,
         "created_at": n.created_at.isoformat(),

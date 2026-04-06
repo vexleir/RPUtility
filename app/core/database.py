@@ -444,6 +444,27 @@ def _migrate(conn: sqlite3.Connection) -> None:
     except Exception:
         pass  # column already exists
 
+    # NPC forms, transformation history, and player relationship history
+    for _col in [
+        "history_with_player TEXT NOT NULL DEFAULT ''",
+        "forms TEXT NOT NULL DEFAULT '[]'",
+        "active_form TEXT",
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE npc_cards ADD COLUMN {_col}")
+        except Exception:
+            pass  # column already exists
+
+    # World fact priority tiers and keyword triggers
+    for _col in [
+        "priority TEXT NOT NULL DEFAULT 'normal'",
+        "trigger_keywords TEXT NOT NULL DEFAULT '[]'",
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE campaign_world_facts ADD COLUMN {_col}")
+        except Exception:
+            pass  # column already exists
+
     # ── Campaign system (new architecture) ───────────────────────────────────
 
     conn.execute("""

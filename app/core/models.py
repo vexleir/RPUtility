@@ -582,6 +582,7 @@ class GenSettings(BaseModel):
     repeat_penalty: float = 1.10
     max_tokens: int = 1024
     seed: int = -1
+    context_window: int = 32768
 
 
 class Campaign(BaseModel):
@@ -624,6 +625,8 @@ class CampaignWorldFact(BaseModel):
     campaign_id: str
     content: str
     category: str = ""                 # e.g. "history", "geography", "politics", "magic"
+    priority: str = "normal"           # "critical" | "normal" | "background"
+    trigger_keywords: list[str] = Field(default_factory=list)  # inject only when these words appear in recent turns
     fact_order: int = 0
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -652,6 +655,15 @@ class NpcDevEntry(BaseModel):
     note: str
 
 
+class NpcForm(BaseModel):
+    """A distinct form or state an NPC can take (e.g. wolf form, corrupted version, disguise)."""
+    label: str                           # "Wolf Form", "Corrupted", "Disguise as Merchant"
+    appearance: str = ""
+    personality: str = ""
+    current_state: str = ""
+    scene_introduced: Optional[int] = None  # scene number when this form first appeared
+
+
 class NpcCard(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     campaign_id: str
@@ -670,6 +682,9 @@ class NpcCard(BaseModel):
     secrets: str = ""                # hidden knowledge — sent to AI, not shown in UI
     short_term_goal: str = ""        # immediate motivation
     long_term_goal: str = ""         # deeper ambition
+    history_with_player: str = ""    # accumulated relationship history across scenes
+    forms: list[NpcForm] = Field(default_factory=list)   # alternate forms/transformations
+    active_form: Optional[str] = None   # label of currently active form; None = base form
     dev_log: list[NpcDevEntry] = Field(default_factory=list)
     portrait_image: Optional[str] = None   # base64 data URL set via image generation
     # Legacy compat — computed from status
