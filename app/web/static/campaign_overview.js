@@ -231,6 +231,8 @@ function renderScenesList() {
       ? '<span class="scene-badge confirmed">Confirmed</span>'
       : '<span class="scene-badge active">In Progress</span>';
     const turnCount = s.turns?.length || 0;
+    const sid = escHtml(s.id);
+    const summaryEsc = (s.confirmed_summary || "").replace(/\\/g, "\\\\").replace(/`/g, "\\`");
     div.innerHTML = `
       <div class="scene-card-header">
         <div>
@@ -238,8 +240,10 @@ function renderScenesList() {
           ${s.title ? `— <span class="scene-title">${escHtml(s.title)}</span>` : ""}
           ${badge}
         </div>
-        <div style="display:flex;gap:8px;align-items:center">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           ${turnCount > 0 ? `<button class="btn btn-sm btn-ghost" onclick="viewSceneTranscript(${JSON.stringify(s).replace(/"/g, '&quot;')})">📜 Read</button>` : ""}
+          ${s.confirmed ? `<button class="btn btn-sm btn-ghost" onclick="editSceneSummary('${sid}', \`${summaryEsc}\`, ${s.scene_number})">✏ Summary</button>` : ""}
+          ${s.confirmed ? `<button class="btn btn-sm btn-ghost" onclick="reopenScene('${sid}')">↩ Reopen</button>` : ""}
           ${!s.confirmed ? `<a href="/campaigns/${CAMPAIGN_ID}/play" class="btn btn-sm">▶ Continue</a>` : ""}
         </div>
       </div>
@@ -248,6 +252,96 @@ function renderScenesList() {
     `;
     container.appendChild(div);
   });
+}
+
+async function reopenScene(sceneId) {
+  if (!confirm("Reopen this scene? It will become active again and you can continue playing or editing it.")) return;
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${sceneId}/reopen`, { method: "POST" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const updated = await res.json();
+    const idx = _scenes.findIndex(s => s.id === sceneId);
+    if (idx >= 0) _scenes[idx] = updated;
+    renderScenesList();
+    showBanner("Scene reopened. Click ▶ Continue to resume.", "success");
+  } catch (e) { showBanner(`Reopen failed: ${e.message}`, "error"); }
+}
+
+let _editSummarySceneId = null;
+
+function editSceneSummary(sceneId, currentSummary, sceneNum) {
+  _editSummarySceneId = sceneId;
+  document.getElementById("es-title").textContent = `Edit Summary — Scene ${sceneNum}`;
+  document.getElementById("es-textarea").value = currentSummary;
+  document.getElementById("es-status").textContent = "";
+
+  // Populate model select
+  const sel = document.getElementById("es-model");
+  if (sel.options.length <= 1) {
+    fetch("/api/models").then(r => r.json()).then(data => {
+      const models = Array.isArray(data) ? data : (data.models || []);
+      models.forEach(m => {
+        const opt = document.createElement("option");
+        opt.value = m.name; opt.textContent = m.name;
+        sel.appendChild(opt);
+      });
+      // Pre-select campaign summary model if set
+      sel.value = _campaign?.summary_model_name || _campaign?.model_name || "";
+    }).catch(() => {});
+  } else {
+    sel.value = _campaign?.summary_model_name || _campaign?.model_name || "";
+  }
+
+  openModal("edit-summary-modal");
+}
+
+async function resuggestSceneSummary() {
+  const sceneId = _editSummarySceneId;
+  if (!sceneId) return;
+  const statusEl = document.getElementById("es-status");
+  const btn = document.getElementById("es-regen-btn");
+  const modelName = document.getElementById("es-model").value || null;
+  statusEl.textContent = "Generating…";
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${sceneId}/suggest-summary`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model_name: modelName }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    document.getElementById("es-textarea").value = data.summary || "";
+    statusEl.textContent = "Summary generated — review and save.";
+  } catch (e) {
+    statusEl.textContent = `Error: ${e.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function saveSceneSummary() {
+  const sceneId = _editSummarySceneId;
+  if (!sceneId) return;
+  const summary = document.getElementById("es-textarea").value.trim();
+  const statusEl = document.getElementById("es-status");
+  statusEl.textContent = "Saving…";
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${sceneId}/summary`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ summary }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const updated = await res.json();
+    const idx = _scenes.findIndex(s => s.id === sceneId);
+    if (idx >= 0) _scenes[idx] = updated;
+    renderScenesList();
+    closeModal("edit-summary-modal");
+    showBanner("Summary saved.", "success");
+  } catch (e) {
+    statusEl.textContent = `Save failed: ${e.message}`;
+  }
 }
 
 function renderChronicle() {
@@ -1298,8 +1392,9 @@ async function openEditCampaign() {
   // Populate name & model
   document.getElementById("cs-name").value = _campaign?.name || "";
 
-  // Populate model select (load models if not yet populated)
+  // Populate model selects (load models if not yet populated)
   const sel = document.getElementById("cs-model");
+  const sumSel = document.getElementById("cs-summary-model");
   if (sel.options.length <= 1) {
     try {
       const res = await fetch("/api/models");
@@ -1309,10 +1404,13 @@ async function openEditCampaign() {
         const opt = document.createElement("option");
         opt.value = m.name; opt.textContent = m.name;
         sel.appendChild(opt);
+        const opt2 = opt.cloneNode(true);
+        sumSel.appendChild(opt2);
       });
     } catch {/* ignore */}
   }
   sel.value = _campaign?.model_name || "";
+  sumSel.value = _campaign?.summary_model_name || "";
 
   // Populate gen settings sliders
   const gs = _campaign?.gen_settings || {};
@@ -1329,8 +1427,9 @@ async function openEditCampaign() {
 async function saveEditCampaign() {
   const gs = _campaign?.gen_settings || {};
   const body = {
-    name:           document.getElementById("cs-name").value.trim() || _campaign?.name,
-    model_name:     document.getElementById("cs-model").value || null,
+    name:              document.getElementById("cs-name").value.trim() || _campaign?.name,
+    model_name:        document.getElementById("cs-model").value || null,
+    summary_model_name: document.getElementById("cs-summary-model").value || null,
     temperature:    parseFloat(document.getElementById("cs-temperature").value),
     top_p:          parseFloat(document.getElementById("cs-top_p").value),
     top_k:          parseInt(document.getElementById("cs-top_k").value),

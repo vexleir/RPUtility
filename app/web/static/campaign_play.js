@@ -26,8 +26,25 @@ let _regenControlsDiv = null; // sibling DOM node holding nav + regen button
 
 document.addEventListener("DOMContentLoaded", () => {
   loadWorld();
+  loadSummaryModels();
   setupInput();
 });
+
+async function loadSummaryModels() {
+  try {
+    const res = await fetch("/api/models");
+    if (!res.ok) return;
+    const data = await res.json();
+    const models = Array.isArray(data) ? data : (data.models || []);
+    const sel = document.getElementById("summary-model-select");
+    models.forEach(m => {
+      const opt = document.createElement("option");
+      opt.value = m.name;
+      opt.textContent = m.name;
+      sel.appendChild(opt);
+    });
+  } catch { /* ignore — dropdown stays at default */ }
+}
 
 async function loadWorld() {
   try {
@@ -47,6 +64,23 @@ async function loadWorld() {
 
     // Initialise gen-settings sliders from campaign defaults
     gsInitFromCampaign();
+
+    // Pre-select summary model dropdown from campaign settings
+    // Use a small delay so loadSummaryModels() has time to populate the options
+    const summaryModel = _campaign?.summary_model_name || "";
+    if (summaryModel) {
+      const trySet = () => {
+        const sel = document.getElementById("summary-model-select");
+        if (!sel) return;
+        if ([...sel.options].some(o => o.value === summaryModel)) {
+          sel.value = summaryModel;
+        } else {
+          // Options not yet loaded — retry once they arrive
+          setTimeout(trySet, 200);
+        }
+      };
+      trySet();
+    }
 
     // Populate setup datalist with known locations
     const dl = document.getElementById("location-suggestions");
@@ -368,10 +402,11 @@ function renderExistingTurns() {
   if (!_scene?.turns?.length) return;
   const area = document.getElementById("messages-area");
   area.innerHTML = "";
-  _scene.turns.forEach(t => {
+  _scene.turns.forEach((t, i) => {
     // Skip the silent continue nudge — it's not a real user message
     if (t.role === "user" && t.content === "(Continue the story.)") return;
-    appendMessage(t.role, t.content);
+    const div = appendMessage(t.role, t.content);
+    _addEditButton(div, t.role, i);
   });
   scrollToBottom();
   updateUndoButton();
@@ -412,7 +447,7 @@ async function sendMessage() {
   // Reset regenerate state — new exchange begins
   _clearRegenState();
 
-  appendMessage("user", text);
+  const userDiv = appendMessage("user", text);
   scrollToBottom();
   _streaming = true;
   setSendEnabled(false);
@@ -443,14 +478,15 @@ async function sendMessage() {
       scrollToBottom();
     }
 
-    // Finalize
+    // Finalize and update local scene turns
     finalizeStreamingMessage(aiDiv, buffer);
-    _trackAiResponse(aiDiv, buffer);
-
-    // Update local scene turns
     if (!_scene.turns) _scene.turns = [];
     _scene.turns.push({ role: "user", content: text });
     _scene.turns.push({ role: "assistant", content: buffer });
+
+    // Attach edit buttons now that indices are known
+    _addEditButton(userDiv, "user", _scene.turns.length - 2);
+    _trackAiResponse(aiDiv, buffer, _scene.turns.length - 1);
 
   } catch (e) {
     aiDiv.innerHTML = `<span class="error-text">Error: ${escHtml(e.message)}</span>`;
@@ -502,11 +538,11 @@ async function continueStory() {
     }
 
     finalizeStreamingMessage(aiDiv, buffer);
-    _trackAiResponse(aiDiv, buffer);
-
     if (!_scene.turns) _scene.turns = [];
     _scene.turns.push({ role: "user", content: continueMsg });
     _scene.turns.push({ role: "assistant", content: buffer });
+
+    _trackAiResponse(aiDiv, buffer, _scene.turns.length - 1);
 
   } catch (e) {
     aiDiv.innerHTML = `<span class="error-text">Error: ${escHtml(e.message)}</span>`;
@@ -528,11 +564,102 @@ function _clearRegenState() {
   _lastAiDiv = null;
 }
 
-function _trackAiResponse(aiDiv, buffer) {
+function _trackAiResponse(aiDiv, buffer, turnIndex = -1) {
   _lastAiDiv = aiDiv;
   _alternatives = [buffer];
   _altIdx = 0;
+  if (turnIndex >= 0) _addEditButton(aiDiv, "assistant", turnIndex);
   _renderRegenControls();
+}
+
+// ── Inline turn editing ───────────────────────────────────────────────────────
+
+function _addEditButton(bubbleDiv, role, turnIndex) {
+  bubbleDiv.querySelector(".turn-edit-btn")?.remove();
+  const btn = document.createElement("button");
+  btn.className = "turn-edit-btn";
+  btn.title = "Edit this message";
+  btn.textContent = "✎";
+  btn.onclick = (e) => { e.stopPropagation(); startTurnEdit(bubbleDiv, turnIndex, role); };
+  bubbleDiv.appendChild(btn);
+}
+
+function startTurnEdit(bubbleDiv, turnIndex, role) {
+  const originalContent = _scene?.turns?.[turnIndex]?.content ?? "";
+
+  bubbleDiv.classList.add("bubble-edit-mode");
+  bubbleDiv.innerHTML = "";
+
+  const ta = document.createElement("textarea");
+  ta.className = "turn-edit-textarea";
+  ta.value = originalContent;
+  // Auto-grow
+  ta.addEventListener("input", () => { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; });
+
+  const btnRow = document.createElement("div");
+  btnRow.className = "turn-edit-actions";
+
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "btn btn-sm btn-primary";
+  saveBtn.textContent = "Save";
+  saveBtn.onclick = async () => {
+    const newContent = ta.value.trim();
+    if (!newContent) return;
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Saving…";
+    await saveTurnEdit(bubbleDiv, turnIndex, role, newContent, originalContent);
+  };
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "btn btn-sm";
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.onclick = () => _restoreBubble(bubbleDiv, role, originalContent, turnIndex);
+
+  btnRow.append(saveBtn, cancelBtn);
+  bubbleDiv.append(ta, btnRow);
+
+  // Size textarea to content, focus
+  requestAnimationFrame(() => {
+    ta.style.height = "auto";
+    ta.style.height = ta.scrollHeight + "px";
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+  });
+}
+
+function _restoreBubble(bubbleDiv, role, content, turnIndex) {
+  bubbleDiv.classList.remove("bubble-edit-mode");
+  if (role === "assistant") {
+    bubbleDiv.innerHTML = marked.parse(content);
+    colorizeAiProse(bubbleDiv);
+  } else {
+    bubbleDiv.textContent = content;
+  }
+  _addEditButton(bubbleDiv, role, turnIndex);
+}
+
+async function saveTurnEdit(bubbleDiv, turnIndex, role, newContent, originalContent) {
+  try {
+    const res = await fetch(
+      `/api/campaigns/${CAMPAIGN_ID}/scenes/${_scene.id}/turns/${turnIndex}`,
+      { method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: newContent }) }
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    // Update local state
+    if (_scene.turns?.[turnIndex]) _scene.turns[turnIndex].content = newContent;
+
+    _restoreBubble(bubbleDiv, role, newContent, turnIndex);
+
+    // Keep regen alternatives in sync if this is the tracked AI div
+    if (role === "assistant" && bubbleDiv === _lastAiDiv) {
+      _alternatives[_altIdx] = newContent;
+    }
+  } catch (e) {
+    showError(`Could not save edit: ${e.message}`);
+    _restoreBubble(bubbleDiv, role, originalContent, turnIndex);
+  }
 }
 
 function _renderRegenControls() {
@@ -782,9 +909,12 @@ function openEndScene() {
 async function suggestSummary() {
   document.getElementById("suggest-loading").style.display = "";
   document.querySelector("#end-scene-suggest-row .btn").disabled = true;
+  const modelName = document.getElementById("summary-model-select").value || null;
   try {
     const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${_scene.id}/suggest-summary`, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model_name: modelName }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
@@ -857,11 +987,23 @@ async function loadWorldUpdateSuggestions() {
     "Based on what happened in this scene, the following world document updates are suggested. Uncheck any you want to skip, then click Apply.";
   footer.style.display = "";
 
-  const { npc_updates = [], new_facts = [], thread_updates = [], new_npcs = [], new_locations = [] } = _pendingSuggestions;
+  const { npc_updates = [], new_facts = [], thread_updates = [], new_npcs = [], new_locations = [],
+          _model, _parse_ok, _raw } = _pendingSuggestions;
   const hasAny = npc_updates.length || new_facts.length || thread_updates.length || new_npcs.length || new_locations.length;
 
   if (!hasAny) {
-    document.getElementById("wu-none-msg").classList.remove("hidden");
+    const noneEl = document.getElementById("wu-none-msg");
+    noneEl.classList.remove("hidden");
+    const modelLabel = _model ? `<strong>${escHtml(_model)}</strong>` : "the model";
+    const rawHtml = _raw
+      ? `<details style="margin-top:10px;text-align:left"><summary style="cursor:pointer;color:var(--text-muted);font-size:0.8rem">▶ Show raw model output (debug)</summary>` +
+        `<pre style="font-size:0.75rem;white-space:pre-wrap;max-height:200px;overflow-y:auto;margin-top:6px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px">${escHtml(_raw)}</pre></details>`
+      : "";
+    if (_parse_ok === false) {
+      noneEl.innerHTML = `${modelLabel} did not return valid JSON. Try a different Summary Model in Campaign Settings.${rawHtml}`;
+    } else {
+      noneEl.innerHTML = `No updates detected by ${modelLabel}. If this is wrong, check the raw output below — the model may be incorrectly deciding nothing qualifies.${rawHtml}`;
+    }
     return;
   }
 
@@ -907,15 +1049,9 @@ async function loadWorldUpdateSuggestions() {
 
   if (new_npcs.length) {
     document.getElementById("wu-new-npcs-section").classList.remove("hidden");
-    document.getElementById("wu-new-npcs-list").innerHTML = new_npcs.map((n, i) => `
-      <label class="wu-item wu-new-entity">
-        <input type="checkbox" class="wu-new-npc-cb" data-index="${i}" checked>
-        <div class="wu-item-text">
-          <strong>${escHtml(n.name)}</strong>${n.role ? ` — <span class="muted">${escHtml(n.role)}</span>` : ""}
-          ${n.appearance ? `<div class="wu-entity-detail">${escHtml(n.appearance)}</div>` : ""}
-          <div class="wu-reason muted">${escHtml(n.significance || "")}</div>
-        </div>
-      </label>`).join("");
+    const list = document.getElementById("wu-new-npcs-list");
+    list.innerHTML = "";
+    new_npcs.forEach((n, i) => list.appendChild(_buildNpcProposalCard(n, i)));
   }
 
   if (new_locations.length) {
@@ -930,6 +1066,80 @@ async function loadWorldUpdateSuggestions() {
         </div>
       </label>`).join("");
   }
+}
+
+function _buildNpcProposalCard(n, i) {
+  const card = document.createElement("div");
+  card.className = "wu-npc-proposal-card";
+  card.dataset.index = i;
+
+  // Field helper: renders a label + input or textarea
+  const field = (label, key, value, multiline = false) => {
+    const row = document.createElement("div");
+    row.className = "wu-npc-field-row";
+    const lbl = document.createElement("label");
+    lbl.className = "wu-npc-field-label";
+    lbl.textContent = label;
+    let input;
+    if (multiline) {
+      input = document.createElement("textarea");
+      input.rows = 2;
+    } else {
+      input = document.createElement("input");
+      input.type = "text";
+    }
+    input.className = "wu-npc-field-input wb-field";
+    input.dataset.field = key;
+    input.value = value || "";
+    row.append(lbl, input);
+    return row;
+  };
+
+  // Header: name + accept/reject buttons
+  const header = document.createElement("div");
+  header.className = "wu-npc-proposal-header";
+  const titleEl = document.createElement("div");
+  titleEl.className = "wu-npc-proposal-title";
+  titleEl.innerHTML = `<strong>${escHtml(n.name)}</strong>${n.role ? ` <span class="muted">— ${escHtml(n.role)}</span>` : ""}`;
+
+  const actions = document.createElement("div");
+  actions.className = "wu-npc-proposal-actions";
+  const acceptBtn = document.createElement("button");
+  acceptBtn.className = "btn btn-sm btn-primary";
+  acceptBtn.textContent = "✓ Accept";
+  const rejectBtn = document.createElement("button");
+  rejectBtn.className = "btn btn-sm btn-ghost";
+  rejectBtn.textContent = "✕ Reject";
+  acceptBtn.onclick = () => { card.classList.remove("rejected"); acceptBtn.classList.add("active-accept"); };
+  rejectBtn.onclick = () => { card.classList.toggle("rejected"); };
+  actions.append(acceptBtn, rejectBtn);
+  header.append(titleEl, actions);
+
+  // Significance note
+  const sig = document.createElement("div");
+  sig.className = "wu-npc-significance muted";
+  sig.textContent = n.significance || "";
+
+  // Fields grid
+  const grid = document.createElement("div");
+  grid.className = "wu-npc-fields-grid";
+  grid.append(
+    field("Name",                   "name",                   n.name),
+    field("Role / Occupation",      "role",                   n.role),
+    field("Gender",                 "gender",                 n.gender),
+    field("Age",                    "age",                    n.age),
+    field("Appearance",             "appearance",             n.appearance,             true),
+    field("Personality",            "personality",            n.personality,            true),
+    field("Relationship to Player", "relationship_to_player", n.relationship_to_player),
+    field("Current Location",       "current_location",       n.current_location),
+    field("Current State",          "current_state",          n.current_state),
+    field("Short-term Goal",        "short_term_goal",        n.short_term_goal),
+    field("Long-term Goal",         "long_term_goal",         n.long_term_goal),
+    field("Secrets / Hidden Info",  "secrets",                n.secrets,                true),
+  );
+
+  card.append(header, sig, grid);
+  return card;
 }
 
 async function applyWorldUpdates() {
@@ -979,24 +1189,26 @@ async function applyWorldUpdates() {
     }).catch(() => {});
   }
 
-  // Create approved new NPCs
-  const checkedNewNpcs = [...document.querySelectorAll(".wu-new-npc-cb:checked")].map(cb => new_npcs[+cb.dataset.index]);
-  for (const n of checkedNewNpcs) {
+  // Create approved new NPCs — read values from editable card inputs
+  const acceptedNpcCards = [...document.querySelectorAll(".wu-npc-proposal-card:not(.rejected)")];
+  for (const card of acceptedNpcCards) {
+    const f = (id) => card.querySelector(`[data-field="${id}"]`)?.value?.trim() || "";
     await fetch(`/api/campaigns/${CAMPAIGN_ID}/npcs`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: n.name,
-        role: n.role || "",
-        gender: n.gender || "",
-        age: n.age || "",
-        appearance: n.appearance || "",
-        personality: n.personality || "",
-        relationship_to_player: n.relationship_to_player || "",
-        current_location: n.current_location || "",
-        current_state: n.current_state || "",
-        short_term_goal: n.short_term_goal || "",
-        long_term_goal: n.long_term_goal || "",
+        name:                   f("name"),
+        role:                   f("role"),
+        gender:                 f("gender"),
+        age:                    f("age"),
+        appearance:             f("appearance"),
+        personality:            f("personality"),
+        relationship_to_player: f("relationship_to_player"),
+        current_location:       f("current_location"),
+        current_state:          f("current_state"),
+        short_term_goal:        f("short_term_goal"),
+        long_term_goal:         f("long_term_goal"),
+        secrets:                f("secrets"),
       }),
     }).catch(() => {});
   }

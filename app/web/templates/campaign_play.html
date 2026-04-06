@@ -219,9 +219,12 @@
           <textarea id="scene-summary-input" rows="6"
             placeholder="Summarise what happened, what was decided, what changed…"></textarea>
         </div>
-        <div id="end-scene-suggest-row" style="margin-top:8px">
+        <div id="end-scene-suggest-row" style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <button class="btn btn-sm" onclick="suggestSummary()">✨ Suggest Summary</button>
-          <span class="muted" id="suggest-loading" style="display:none;margin-left:8px">Generating…</span>
+          <select id="summary-model-select" class="theme-select" title="Model to use for summary generation" style="font-size:12px;padding:3px 6px">
+            <option value="">Same as campaign model</option>
+          </select>
+          <span class="muted" id="suggest-loading" style="display:none">Generating…</span>
         </div>
       </div>
       <div class="modal-footer">
@@ -256,8 +259,8 @@
           <div id="wu-threads-list"></div>
         </div>
         <div id="wu-new-npcs-section" class="hidden" style="margin-top:16px">
-          <h4 style="margin-bottom:6px">New Characters</h4>
-          <p class="muted" style="font-size:0.82rem;margin-bottom:8px">Characters who appeared in this scene and may warrant a world document entry. Uncheck any that are minor or unimportant.</p>
+          <h4 style="margin-bottom:4px">New Characters</h4>
+          <p class="muted" style="font-size:0.82rem;margin-bottom:10px">Review and edit each proposed character card. Click <strong>✕ Reject</strong> to skip any you don't want to keep.</p>
           <div id="wu-new-npcs-list"></div>
         </div>
         <div id="wu-new-locations-section" class="hidden" style="margin-top:16px">
@@ -265,8 +268,7 @@
           <p class="muted" style="font-size:0.82rem;margin-bottom:8px">Locations visited or described in this scene that may warrant a world document entry.</p>
           <div id="wu-new-locations-list"></div>
         </div>
-        <div id="wu-none-msg" class="hidden muted" style="text-align:center;padding:24px 0">
-          No world document updates detected for this scene.
+        <div id="wu-none-msg" class="hidden muted" style="text-align:center;padding:24px 0;font-size:0.9rem">
         </div>
       </div>
       <div class="modal-footer" id="world-updates-footer">

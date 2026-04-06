@@ -80,6 +80,7 @@ class CreateCampaignRequest(BaseModel):
 class UpdateCampaignRequest(BaseModel):
     name: Optional[str] = None
     model_name: Optional[str] = None
+    summary_model_name: Optional[str] = None
     prose_style: Optional[str] = None
     tone: Optional[str] = None
     themes: Optional[list[str]] = None
@@ -240,8 +241,9 @@ def update_campaign(campaign_id: str, req: UpdateCampaignRequest):
     if not c:
         raise HTTPException(404, "Campaign not found")
     updates: dict = {}
-    if req.name is not None:        updates["name"] = req.name
-    if req.model_name is not None:  updates["model_name"] = req.model_name
+    if req.name is not None:                 updates["name"] = req.name
+    if req.model_name is not None:           updates["model_name"] = req.model_name
+    if req.summary_model_name is not None:   updates["summary_model_name"] = req.summary_model_name
     if any(f is not None for f in [req.prose_style, req.tone, req.themes, req.magic_system]):
         sg = c.style_guide
         if req.prose_style is not None:   sg = sg.model_copy(update={"prose_style": req.prose_style})
@@ -816,16 +818,64 @@ def confirm_scene(campaign_id: str, scene_id: str, req: ConfirmSceneRequest):
     scene.confirmed = True
     store.save(scene)
 
-    # Write a chronicle entry for this scene if it has a summary
+    # Upsert chronicle entry — update existing if one exists for this scene number
     if summary:
-        _chronicle().save(ChronicleEntry(
-            campaign_id=campaign_id,
-            scene_range_start=scene.scene_number,
-            scene_range_end=scene.scene_number,
-            content=summary,
-            confirmed=True,
-        ))
+        _upsert_chronicle(campaign_id, scene.scene_number, summary)
 
+    return _scene_dict(scene)
+
+
+@router.post("/{campaign_id}/scenes/{scene_id}/reopen")
+def reopen_scene(campaign_id: str, scene_id: str):
+    """Reopen a confirmed scene so turns can be added or edited."""
+    store = _scenes()
+    scene = store.get(scene_id)
+    if not scene or scene.campaign_id != campaign_id:
+        raise HTTPException(404, "Scene not found")
+    if not scene.confirmed:
+        raise HTTPException(400, "Scene is not confirmed")
+    scene.confirmed = False
+    store.save(scene)
+    return _scene_dict(scene)
+
+
+class UpdateSummaryRequest(BaseModel):
+    summary: str
+
+
+@router.patch("/{campaign_id}/scenes/{scene_id}/summary")
+def update_scene_summary(campaign_id: str, scene_id: str, req: UpdateSummaryRequest):
+    """Update the confirmed summary text of a scene (confirmed or not)."""
+    store = _scenes()
+    scene = store.get(scene_id)
+    if not scene or scene.campaign_id != campaign_id:
+        raise HTTPException(404, "Scene not found")
+    scene.confirmed_summary = req.summary
+    scene.proposed_summary = req.summary
+    store.save(scene)
+    # Keep chronicle in sync
+    if req.summary:
+        _upsert_chronicle(campaign_id, scene.scene_number, req.summary)
+    return _scene_dict(scene)
+
+
+class EditTurnRequest(BaseModel):
+    content: str
+
+
+@router.patch("/{campaign_id}/scenes/{scene_id}/turns/{turn_index}")
+def edit_scene_turn(campaign_id: str, scene_id: str, turn_index: int, req: EditTurnRequest):
+    """Edit the content of any turn by index (0-based)."""
+    store = _scenes()
+    scene = store.get(scene_id)
+    if not scene or scene.campaign_id != campaign_id:
+        raise HTTPException(404, "Scene not found")
+    if turn_index < 0 or turn_index >= len(scene.turns):
+        raise HTTPException(400, f"Turn index {turn_index} out of range (scene has {len(scene.turns)} turns)")
+    if not req.content.strip():
+        raise HTTPException(400, "Content cannot be empty")
+    scene.turns[turn_index] = SceneTurn(role=scene.turns[turn_index].role, content=req.content.strip())
+    store.save(scene)
     return _scene_dict(scene)
 
 
@@ -2361,100 +2411,80 @@ def scene_chat_stream(campaign_id: str, scene_id: str, req: SceneChatRequest):
 
 # ── Post-scene AI tools ───────────────────────────────────────────────────────
 
-_SUGGEST_SUMMARY_SYSTEM = """You are a transcript indexer. Your task is purely mechanical: read a roleplay transcript and list what happened, one event per line.
+_SUGGEST_SUMMARY_SYSTEM = """You are a transcript indexer. Your only job is to extract events from a numbered roleplay transcript and list them, one per line, with the turn number they came from.
 
 CRITICAL RULES:
 - You are NOT a storyteller. Do NOT write fiction, narration, or creative prose.
 - You are NOT a narrator or character. The scene is FINISHED — do not continue it.
-- Every line you write must be directly supported by specific text in the transcript.
-- If something was not stated explicitly in the transcript, do NOT include it.
-- Do NOT infer motivations, fill gaps, or add details the transcript does not contain.
-- Do NOT embellish with adjectives or atmosphere not present in the transcript text.
+- Every line you write MUST cite the exact turn number it came from using [Turn N].
+- If you cannot point to a specific turn that supports a claim, you MUST NOT include it.
+- Do NOT infer, speculate, or add ANY detail not explicitly present in the cited turn.
+- Do NOT merge or paraphrase multiple turns into one statement — cite only one turn per line.
+- Do NOT embellish, add atmosphere, or use creative language.
 
-Output format:
-- One event per line, written as a plain past-tense statement
-- Start each line with "- "
-- Work strictly chronologically from the first turn to the last
-- Include every significant action, statement, decision, and outcome
-- Omit only truly trivial exchanges (e.g. greetings with no story consequence)
-- Output ONLY the bullet list — no title, no preamble, no closing sentence"""
+Output format — one line per event, strictly:
+- [Turn N] Past-tense statement of exactly what happened in that turn.
 
-_SUGGEST_UPDATES_SYSTEM = """You are a world-state assistant for a collaborative roleplay campaign.
-A scene has just concluded. Analyse the transcript and suggest concrete updates to the world document
-that reflect what actually happened. Only suggest changes clearly supported by the scene — do not speculate.
+Work chronologically from Turn 1 to the last turn. Include every significant action, statement, decision, and outcome. Omit only trivial filler with no story consequence.
+Output ONLY the list — no title, no preamble, no closing sentence."""
 
-Output ONLY valid JSON with exactly this structure (no markdown fences, no extra text):
+_SUGGEST_UPDATES_SYSTEM = """Extract world-document entries from a completed roleplay scene.
+
+TASK: Read the transcript and summary, then output a JSON object cataloguing every character, place, and fact worth recording. The player reviews every entry and approves or rejects — err heavily toward including MORE, not less.
+
+CRITICAL OUTPUT RULE: Your response must be ONLY the JSON object below. No thinking prose outside the JSON. No markdown. No explanation. Begin your response with { and end with }.
+
+REQUIRED JSON FORMAT (all five keys must be present, use [] if nothing qualifies):
 {
-  "npc_updates": [
-    {
-      "npc_id": "uuid",
-      "npc_name": "Name",
-      "field": "current_state",
-      "current_value": "...",
-      "suggested_value": "...",
-      "reason": "One sentence"
-    }
-  ],
-  "new_facts": [
-    {
-      "content": "Short declarative fact established in this scene",
-      "reason": "One sentence"
-    }
-  ],
-  "thread_updates": [
-    {
-      "thread_id": "uuid",
-      "thread_title": "Title",
-      "new_status": "resolved",
-      "reason": "One sentence"
-    }
-  ],
   "new_npcs": [
-    {
-      "name": "Character name",
-      "role": "Their role or occupation",
-      "gender": "inferred gender",
-      "age": "inferred age or age range",
-      "appearance": "physical description in 1 sentence",
-      "personality": "personality in 1 sentence",
-      "relationship_to_player": "how they relate to the player character",
-      "current_location": "where they are",
-      "current_state": "their current situation",
-      "short_term_goal": "what they want right now",
-      "long_term_goal": "their deeper ambition",
-      "significance": "One sentence explaining why this character warrants a world document entry"
-    }
+    {"name":"...", "role":"...", "gender":"...", "age":"...", "appearance":"(hair colour, eye colour, build, clothing, distinguishing features)", "personality":"...", "relationship_to_player":"...", "current_location":"...", "current_state":"...", "short_term_goal":"...", "long_term_goal":"...", "secrets":"(hidden backstory, concealed motives, or unknown truths about them)", "significance":"..."}
   ],
   "new_locations": [
-    {
-      "name": "Location name",
-      "description": "What this place is in 1-2 sentences",
-      "current_state": "current situation of this place",
-      "significance": "One sentence explaining why this location warrants a world document entry"
-    }
+    {"name":"...", "description":"...", "current_state":"...", "significance":"..."}
+  ],
+  "new_facts": [
+    {"content":"...", "reason":"..."}
+  ],
+  "npc_updates": [
+    {"npc_id":"exact-uuid", "npc_name":"...", "field":"current_state", "current_value":"...", "suggested_value":"...", "reason":"..."}
+  ],
+  "thread_updates": [
+    {"thread_id":"exact-uuid", "thread_title":"...", "new_status":"resolved", "reason":"..."}
   ]
 }
 
-For npc_updates, field must be one of: current_state, is_alive, current_location.
-For thread_updates, new_status must be one of: resolved, dormant.
+WHAT TO EXTRACT:
 
-For new_npcs — ONLY include a character if ALL of the following apply:
-- They have a name (not just "a guard" or "a merchant")
-- They spoke dialogue, took action that affected the player, OR are established as a recurring presence
-- They are NOT already in the existing NPCs list
+new_npcs: Every character who appears in the scene AND is not in the CURRENT NPCs list. Include characters referred to by title ("the innkeeper", "Captain Voss"), unnamed-but-described figures if they seem significant, and any character who speaks, acts, or is described. Do NOT include the player character. Fill every field as completely as possible from the scene — infer hair colour, eye colour, build, and clothing from any descriptions given; infer age range, personality, and goals from dialogue and actions; put backstory, history, and concealed information in "secrets".
 
-For new_locations — ONLY include a location if:
-- It was meaningfully described or explored (not just mentioned in passing)
-- It is NOT already in the world document
-- The player is likely to return there OR it significantly shaped the scene
+new_locations: Every named or described place visited or mentioned in the scene that is not in the CURRENT LOCATIONS list.
 
-Return empty arrays for any category with no qualifying entries."""
+new_facts: Every revelation, secret, lore detail, rule of the world, plot twist, or piece of backstory established in this scene.
+
+npc_updates: Changes to characters already in the CURRENT NPCs list (field must be: current_state, is_alive, or current_location). Match by the exact uuid shown.
+
+thread_updates: Narrative threads already in the list that were resolved or went dormant. Match by exact uuid.
+
+EXAMPLE — given a fantasy scene where the player met a blacksmith named Oren who revealed that dragons are controlled by a magical collar, and visited his forge in the Ashveil district, the correct output is:
+{"new_npcs":[{"name":"Oren","role":"Blacksmith","gender":"male","age":"middle-aged, late 40s","appearance":"broad-shouldered man with burn-scarred forearms, close-cropped grey hair, dark eyes, perpetually soot-stained leather apron","personality":"gruff but honest; speaks plainly and distrusts nobility; loyal to those who earn it","relationship_to_player":"informant, cautiously helpful","current_location":"his forge in the Ashveil district","current_state":"running his business, worried about increased dragon activity near the city","short_term_goal":"complete his current sword commission without drawing attention","long_term_goal":"protect his family and get them out of the city before the dragons grow bolder","secrets":"Lost his wife to a dragon attack three years ago; blames the city council for covering it up; knows a hidden route out of the city through the old aqueduct","significance":"Revealed key lore about dragon collars; likely to be a recurring contact"}],"new_locations":[{"name":"Oren's Forge, Ashveil District","description":"A working blacksmith's forge in the Ashveil district of the city.","current_state":"active","significance":"Where the player learned about dragon collars; potential future meeting point"}],"new_facts":[{"content":"Dragons in this world are controlled by magical collars; removing the collar frees them.","reason":"Oren revealed this directly to the player"}],"npc_updates":[],"thread_updates":[]}"""
+
+
+class SuggestSummaryRequest(BaseModel):
+    model_name: Optional[str] = None
+
+
+_SUMMARY_CHUNK_SIZE = 12  # turns per extraction call
 
 
 @router.post("/{campaign_id}/scenes/{scene_id}/suggest-summary")
-def suggest_scene_summary(campaign_id: str, scene_id: str):
-    """Generate a suggested summary for a scene based on its turns."""
+def suggest_scene_summary(campaign_id: str, scene_id: str, req: SuggestSummaryRequest = None):
+    """
+    Generate a suggested summary by chunking the transcript into batches of
+    _SUMMARY_CHUNK_SIZE turns and extracting events from each chunk separately.
+    This prevents early turns being ignored due to attention degradation on long transcripts.
+    """
     import httpx
+    import re as _re
 
     scene = _scenes().get(scene_id)
     if not scene or scene.campaign_id != campaign_id:
@@ -2462,27 +2492,16 @@ def suggest_scene_summary(campaign_id: str, scene_id: str):
     if not scene.turns:
         return {"summary": ""}
 
-    # Exclude silent continue nudges from the transcript
+    # Exclude silent continue nudges
     visible_turns = [t for t in scene.turns if t.content != "(Continue the story.)"]
-    # Number each turn so the model can reference them and stay anchored to the source
-    numbered_transcript = "\n\n".join(
-        f"[Turn {i+1} — {'Player' if t.role == 'user' else 'Narrator'}]: {t.content}"
-        for i, t in enumerate(visible_turns)
-    )
-    prompt = (
-        f"Scene title: {scene.title or 'Untitled'}\n"
-        f"Location: {scene.location or 'Unknown'}\n"
-        f"Total turns: {len(visible_turns)}\n\n"
-        f"TRANSCRIPT:\n\n{numbered_transcript}\n\n"
-        f"--- END OF TRANSCRIPT ---\n\n"
-        f"List every significant event from the transcript above, one per line, strictly in order. "
-        f"Only include what is explicitly in the transcript. Begin:"
-    )
 
     campaign = _campaigns().get(campaign_id)
-    model = (campaign.model_name if campaign else None) or config.ollama_model
+    model = (req.model_name if req and req.model_name else None) \
+            or (getattr(campaign, "summary_model_name", None) if campaign else None) \
+            or (campaign.model_name if campaign else None) \
+            or config.ollama_model
 
-    try:
+    def _call(prompt: str) -> str:
         payload = {
             "model": model,
             "messages": [
@@ -2490,9 +2509,10 @@ def suggest_scene_summary(campaign_id: str, scene_id: str):
                 {"role": "user", "content": prompt},
             ],
             "stream": False,
+            "think": False,
             "options": {
                 "temperature": 0.1,
-                "num_predict": 2048,
+                "num_predict": 1024,
                 "num_ctx": config.context_window,
             },
         }
@@ -2502,7 +2522,36 @@ def suggest_scene_summary(campaign_id: str, scene_id: str):
             timeout=httpx.Timeout(10.0, read=300.0),
         )
         r.raise_for_status()
-        summary = r.json()["message"]["content"].strip()
+        raw = r.json()["message"]["content"]
+        return _re.sub(r"<think>[\s\S]*?</think>", "", raw, flags=_re.IGNORECASE).strip()
+
+    # Split into chunks and extract events from each independently
+    all_lines: list[str] = []
+    total = len(visible_turns)
+    try:
+        for chunk_start in range(0, total, _SUMMARY_CHUNK_SIZE):
+            chunk = visible_turns[chunk_start:chunk_start + _SUMMARY_CHUNK_SIZE]
+            chunk_text = "\n\n".join(
+                f"[Turn {chunk_start + i + 1} — {'Player' if t.role == 'user' else 'Narrator'}]: {t.content}"
+                for i, t in enumerate(chunk)
+            )
+            first_turn = chunk_start + 1
+            last_turn = chunk_start + len(chunk)
+            prompt = (
+                f"Scene title: {scene.title or 'Untitled'}\n"
+                f"Location: {scene.location or 'Unknown'}\n"
+                f"This is turns {first_turn}–{last_turn} of {total} total.\n\n"
+                f"TRANSCRIPT EXCERPT:\n\n{chunk_text}\n\n"
+                f"--- END OF EXCERPT ---\n\n"
+                f"List every significant event from ONLY these turns, one per line with its turn number. "
+                f"Only include what is explicitly stated above. Begin:"
+            )
+            chunk_result = _call(prompt)
+            # Collect non-empty lines that look like bullet entries
+            for line in chunk_result.splitlines():
+                line = line.strip()
+                if line and (line.startswith("-") or line.startswith("[")):
+                    all_lines.append(line)
     except httpx.ConnectError:
         raise HTTPException(503, "Cannot reach Ollama. Is it running?")
     except httpx.TimeoutException:
@@ -2510,7 +2559,7 @@ def suggest_scene_summary(campaign_id: str, scene_id: str):
     except Exception as e:
         raise HTTPException(503, f"Summary generation failed: {e}")
 
-    return {"summary": summary}
+    return {"summary": "\n".join(all_lines)}
 
 
 @router.post("/{campaign_id}/scenes/{scene_id}/suggest-updates")
@@ -2553,22 +2602,32 @@ def suggest_world_updates(campaign_id: str, scene_id: str):
         for t in visible_turns
     ]
 
+    # Build prompt — put the content FIRST so the model reads scene before exclusion lists
     parts = []
-    if npc_lines:
-        parts.append("[CURRENT NPCs — do not re-propose these]\n" + "\n".join(npc_lines))
-    if place_lines:
-        parts.append("[CURRENT LOCATIONS — do not re-propose these]\n" + "\n".join(place_lines))
-    if thread_lines:
-        parts.append("[ACTIVE NARRATIVE THREADS]\n" + "\n".join(thread_lines))
     if scene.confirmed_summary:
         parts.append(f"[CONFIRMED SCENE SUMMARY]\n{scene.confirmed_summary}")
     if transcript_lines:
         parts.append("[SCENE TRANSCRIPT]\n" + "\n\n".join(transcript_lines))
+    if thread_lines:
+        parts.append("[ACTIVE NARRATIVE THREADS — update status if resolved/dormant]\n" + "\n".join(thread_lines))
+    if npc_lines:
+        parts.append("[ALREADY RECORDED NPCs — do NOT add these again]\n" + "\n".join(npc_lines))
+    if place_lines:
+        parts.append("[ALREADY RECORDED LOCATIONS — do NOT add these again]\n" + "\n".join(place_lines))
 
-    prompt = "\n\n".join(parts) + "\n\nAnalyse the scene and return your JSON suggestions."
+    prompt = "\n\n".join(parts) + (
+        "\n\nFirst, mentally list every character name (or title/role if unnamed) that appears anywhere in the transcript above. "
+        "Then, for each one NOT in the ALREADY RECORDED NPCs list, add a new_npc entry. "
+        "Also extract every new location and every plot fact or revelation. "
+        "Output ONLY the JSON object starting with {."
+    )
 
     campaign = _campaigns().get(campaign_id)
-    model = (campaign.model_name if campaign else None) or config.ollama_model
+    model = (getattr(campaign, "summary_model_name", None) if campaign else None) \
+            or (campaign.model_name if campaign else None) \
+            or config.ollama_model
+
+    log.info("suggest_world_updates: using model=%s for scene=%s", model, scene_id)
 
     try:
         payload = {
@@ -2578,7 +2637,8 @@ def suggest_world_updates(campaign_id: str, scene_id: str):
                 {"role": "user", "content": prompt},
             ],
             "stream": False,
-            "options": {"temperature": 0.3, "num_predict": 4096, "num_ctx": config.context_window},
+            "think": False,
+            "options": {"temperature": 0.5, "num_predict": 8192, "num_ctx": config.context_window},
         }
         r = httpx.post(
             f"{config.ollama_base_url.rstrip('/')}/api/chat",
@@ -2594,17 +2654,61 @@ def suggest_world_updates(campaign_id: str, scene_id: str):
     except Exception as e:
         raise HTTPException(503, f"World updates generation failed: {e}")
 
+    # Strip <think> blocks before parsing (Qwen3, DeepSeek-R1, etc.)
+    import re as _re
+    raw = _re.sub(r"<think>[\s\S]*?</think>", "", raw, flags=_re.IGNORECASE).strip()
+
     data = _extract_json(raw)
+    has_any = any([data.get("npc_updates"), data.get("new_facts"), data.get("thread_updates"),
+                   data.get("new_npcs"), data.get("new_locations")])
+    parse_ok = bool(data)
+
+    log.info(
+        "suggest_world_updates: model=%s raw_len=%d parse_ok=%s has_any=%s "
+        "new_npcs=%d new_locations=%d new_facts=%d npc_updates=%d thread_updates=%d",
+        model, len(raw), parse_ok, has_any,
+        len(data.get("new_npcs", [])), len(data.get("new_locations", [])),
+        len(data.get("new_facts", [])), len(data.get("npc_updates", [])),
+        len(data.get("thread_updates", [])),
+    )
+    if not parse_ok:
+        log.warning("suggest_world_updates: JSON parse FAILED. Raw (first 3000 chars):\n%s", raw[:3000])
+    elif not has_any:
+        log.warning("suggest_world_updates: model returned all-empty arrays. Raw (first 3000 chars):\n%s", raw[:3000])
+
     return {
         "npc_updates": data.get("npc_updates", []),
         "new_facts": data.get("new_facts", []),
         "thread_updates": data.get("thread_updates", []),
         "new_npcs": data.get("new_npcs", []),
         "new_locations": data.get("new_locations", []),
+        "_model": model,
+        "_parse_ok": parse_ok,
+        "_raw": raw[:2000],   # first 2000 chars for client-side debug panel
     }
 
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
+
+def _upsert_chronicle(campaign_id: str, scene_number: int, content: str) -> None:
+    """Create or update the chronicle entry for a specific scene number."""
+    store = _chronicle()
+    existing = next(
+        (e for e in store.get_all(campaign_id)
+         if e.scene_range_start == scene_number and e.scene_range_end == scene_number),
+        None,
+    )
+    if existing:
+        store.update_content(existing.id, content)
+    else:
+        store.save(ChronicleEntry(
+            campaign_id=campaign_id,
+            scene_range_start=scene_number,
+            scene_range_end=scene_number,
+            content=content,
+            confirmed=True,
+        ))
+
 
 def _require_campaign(campaign_id: str):
     c = _campaigns().get(campaign_id)
@@ -2618,6 +2722,7 @@ def _campaign_dict(c) -> dict:
         "id": c.id,
         "name": c.name,
         "model_name": c.model_name,
+        "summary_model_name": c.summary_model_name if hasattr(c, "summary_model_name") else None,
         "style_guide": c.style_guide.model_dump(),
         "gen_settings": c.gen_settings.model_dump(),
         "notes": c.notes,

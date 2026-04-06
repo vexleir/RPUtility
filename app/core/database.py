@@ -438,6 +438,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
     except Exception:
         pass  # column already exists
 
+    # Summary model: separate Ollama model for scene summary extraction
+    try:
+        conn.execute("ALTER TABLE campaigns ADD COLUMN summary_model_name TEXT")
+    except Exception:
+        pass  # column already exists
+
     # ── Campaign system (new architecture) ───────────────────────────────────
 
     conn.execute("""

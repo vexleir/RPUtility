@@ -588,6 +588,7 @@ class Campaign(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
     model_name: Optional[str] = None
+    summary_model_name: Optional[str] = None  # separate model for scene summary extraction
     style_guide: StyleGuide = Field(default_factory=StyleGuide)
     gen_settings: GenSettings = Field(default_factory=GenSettings)
     notes: str = ""                    # player scratchpad — never sent to AI

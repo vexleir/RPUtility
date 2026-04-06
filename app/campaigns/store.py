@@ -75,8 +75,8 @@ class CampaignStore:
         c.updated_at = _now()
         with get_connection(self._db) as conn:
             conn.execute(
-                "UPDATE campaigns SET name=?,model_name=?,style_guide=?,gen_settings=?,notes=?,cover_image=?,updated_at=? WHERE id=?",
-                (c.name, c.model_name,
+                "UPDATE campaigns SET name=?,model_name=?,summary_model_name=?,style_guide=?,gen_settings=?,notes=?,cover_image=?,updated_at=? WHERE id=?",
+                (c.name, c.model_name, c.summary_model_name,
                  json_encode(c.style_guide.model_dump()),
                  json_encode(c.gen_settings.model_dump()),
                  c.notes, c.cover_image,
@@ -98,6 +98,7 @@ def _row_to_campaign(row) -> Campaign:
         id=row["id"],
         name=row["name"],
         model_name=row["model_name"],
+        summary_model_name=row["summary_model_name"] if "summary_model_name" in keys else None,
         style_guide=StyleGuide(**sg_raw) if sg_raw else StyleGuide(),
         gen_settings=GenSettings(**{k: v for k, v in gs_raw.items() if k in GenSettings.model_fields}) if gs_raw else GenSettings(),
         notes=row["notes"] if "notes" in keys else "",

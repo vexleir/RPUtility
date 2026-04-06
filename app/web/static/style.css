@@ -1402,6 +1402,41 @@ select option { background: var(--surface2); }
 .wu-entity-detail { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 .wu-new-entity { background: var(--surface2); border-radius: 6px; padding: 10px; margin-bottom: 4px; border-bottom: none; }
 .wu-new-entity:last-child { margin-bottom: 0; }
+
+/* NPC proposal cards (Story Impact modal) */
+.wu-npc-proposal-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+  transition: opacity 0.2s;
+}
+.wu-npc-proposal-card.rejected {
+  opacity: 0.4;
+  border-style: dashed;
+}
+.wu-npc-proposal-card.rejected .wu-npc-fields-grid,
+.wu-npc-proposal-card.rejected .wu-npc-significance { display: none; }
+.wu-npc-proposal-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 4px; gap: 8px;
+}
+.wu-npc-proposal-title { font-size: 14px; }
+.wu-npc-proposal-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.wu-npc-significance { font-size: 12px; margin-bottom: 10px; font-style: italic; }
+.wu-npc-fields-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+}
+.wu-npc-field-row { display: flex; flex-direction: column; gap: 2px; }
+.wu-npc-field-label { font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--text-muted); }
+.wu-npc-field-input { font-size: 13px; padding: 5px 8px; }
+textarea.wu-npc-field-input { resize: vertical; }
+/* Full-width fields (textareas) */
+.wu-npc-field-row:has(textarea) { grid-column: 1 / -1; }
 .scene-setup-inner { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; }
 .scene-setup-inner h3 { margin-bottom: 8px; }
 
@@ -1551,6 +1586,48 @@ select option { background: var(--surface2); }
   border-radius: 50%; background: var(--accent-light);
   animation: bounce 1s infinite ease-in-out;
 }
+
+/* Inline turn edit button (appears on hover, inside bubble) */
+.message-bubble { position: relative; }
+.turn-edit-btn {
+  position: absolute;
+  bottom: 5px; right: 7px;
+  opacity: 0;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 1px 5px;
+  line-height: 1;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+.message-bubble:hover .turn-edit-btn { opacity: 1; }
+.turn-edit-btn:hover { color: var(--text); background: var(--border); border-color: var(--border); }
+
+/* Bubble in edit mode */
+.bubble-edit-mode {
+  display: flex !important;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+}
+.turn-edit-textarea {
+  width: 100%;
+  min-height: 80px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+  box-sizing: border-box;
+}
+.ai-bubble .turn-edit-textarea { font-family: Georgia, "Times New Roman", serif; font-size: 15px; }
+.turn-edit-actions { display: flex; gap: 6px; }
 
 /* Regenerate controls (below last AI bubble) */
 .regen-controls {
