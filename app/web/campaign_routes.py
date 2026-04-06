@@ -2361,21 +2361,23 @@ def scene_chat_stream(campaign_id: str, scene_id: str, req: SceneChatRequest):
 
 # ── Post-scene AI tools ───────────────────────────────────────────────────────
 
-_SUGGEST_SUMMARY_SYSTEM = """You are a campaign record-keeper performing an OUT-OF-CHARACTER extraction task.
+_SUGGEST_SUMMARY_SYSTEM = """You are a transcript indexer. Your task is purely mechanical: read a roleplay transcript and list what happened, one event per line.
 
-IMPORTANT: The roleplay scene is OVER. Do NOT continue the story. Do NOT write any new dialogue, narration, or fiction. Do NOT act as the narrator or any character.
+CRITICAL RULES:
+- You are NOT a storyteller. Do NOT write fiction, narration, or creative prose.
+- You are NOT a narrator or character. The scene is FINISHED — do not continue it.
+- Every line you write must be directly supported by specific text in the transcript.
+- If something was not stated explicitly in the transcript, do NOT include it.
+- Do NOT infer motivations, fill gaps, or add details the transcript does not contain.
+- Do NOT embellish with adjectives or atmosphere not present in the transcript text.
 
-Your job is to extract and record ONLY what is explicitly stated in the transcript — nothing more.
-
-Rules:
-- ONLY include details, events, names, places, and outcomes that appear verbatim or directly in the transcript
-- Do NOT infer, speculate, assume, or invent ANY detail that is not explicitly stated in the text
-- Do NOT fill gaps, embellish, or "round out" the record — if it was not stated, it does not exist
-- Work chronologically from beginning to end of the transcript
-- Write in plain past tense prose (e.g. "The player asked...", "Elara said...", "The party moved to...")
-- Cover every significant event from start to finish — do not skip or compress
-- Do NOT add commentary, headings, bullet points, labels, or markdown formatting
-- Output ONLY the summary as plain prose — nothing else"""
+Output format:
+- One event per line, written as a plain past-tense statement
+- Start each line with "- "
+- Work strictly chronologically from the first turn to the last
+- Include every significant action, statement, decision, and outcome
+- Omit only truly trivial exchanges (e.g. greetings with no story consequence)
+- Output ONLY the bullet list — no title, no preamble, no closing sentence"""
 
 _SUGGEST_UPDATES_SYSTEM = """You are a world-state assistant for a collaborative roleplay campaign.
 A scene has just concluded. Analyse the transcript and suggest concrete updates to the world document
@@ -2462,16 +2464,19 @@ def suggest_scene_summary(campaign_id: str, scene_id: str):
 
     # Exclude silent continue nudges from the transcript
     visible_turns = [t for t in scene.turns if t.content != "(Continue the story.)"]
-    transcript = "\n\n".join(
-        f"[{'Player' if t.role == 'user' else 'Narrator'}]: {t.content}"
-        for t in visible_turns
+    # Number each turn so the model can reference them and stay anchored to the source
+    numbered_transcript = "\n\n".join(
+        f"[Turn {i+1} — {'Player' if t.role == 'user' else 'Narrator'}]: {t.content}"
+        for i, t in enumerate(visible_turns)
     )
     prompt = (
-        f"COMPLETED SCENE — write a thorough factual past-tense summary covering every important event from start to finish.\n\n"
         f"Scene title: {scene.title or 'Untitled'}\n"
-        f"Location: {scene.location or 'Unknown'}\n\n"
-        f"TRANSCRIPT (do not continue this — analyse it from beginning to end):\n\n{transcript}\n\n"
-        f"Write the complete summary now (past tense, plain prose, cover everything that happened):"
+        f"Location: {scene.location or 'Unknown'}\n"
+        f"Total turns: {len(visible_turns)}\n\n"
+        f"TRANSCRIPT:\n\n{numbered_transcript}\n\n"
+        f"--- END OF TRANSCRIPT ---\n\n"
+        f"List every significant event from the transcript above, one per line, strictly in order. "
+        f"Only include what is explicitly in the transcript. Begin:"
     )
 
     campaign = _campaigns().get(campaign_id)
