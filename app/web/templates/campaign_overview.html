@@ -640,43 +640,43 @@
           <div class="gen-setting-label"><span>Temperature</span><span class="gen-setting-value" id="cs-lbl-temperature">0.80</span></div>
           <input type="range" id="cs-temperature" min="0" max="2" step="0.05" value="0.80" oninput="csSync('temperature',this.value,2)">
           <div class="gen-setting-bounds"><span>0</span><span>2</span></div>
-          <p class="form-hint">Controls randomness. Higher = more creative, lower = more focused.</p>
+          <p class="form-hint">How unpredictable the AI's word choices are. Low (0.2–0.5) = consistent and focused prose. Medium (0.7–1.0) = natural creative variation. High (1.2+) = wild and experimental — may become incoherent. Start here when tuning.</p>
         </div>
         <div class="gen-setting-row">
           <div class="gen-setting-label"><span>Top-P</span><span class="gen-setting-value" id="cs-lbl-top_p">0.95</span></div>
           <input type="range" id="cs-top_p" min="0" max="1" step="0.01" value="0.95" oninput="csSync('top_p',this.value,2)">
           <div class="gen-setting-bounds"><span>0</span><span>1</span></div>
-          <p class="form-hint">Nucleus sampling threshold.</p>
+          <p class="form-hint">Limits word choices to the most probable options that together make up this percentage of likelihood. 0.9–0.95 is a good default — it cuts off unlikely words while keeping variety. Lower values make responses more predictable; works alongside Temperature.</p>
         </div>
         <div class="gen-setting-row">
           <div class="gen-setting-label"><span>Top-K</span><span class="gen-setting-value" id="cs-lbl-top_k">0</span></div>
           <input type="range" id="cs-top_k" min="0" max="200" step="1" value="0" oninput="csSync('top_k',this.value,0)">
           <div class="gen-setting-bounds"><span>0 (off)</span><span>200</span></div>
-          <p class="form-hint">Limit sampling to top-K tokens. 0 = disabled.</p>
+          <p class="form-hint">Hard limit on how many candidate words the model considers at each step. 0 = disabled (recommended — let Top-P handle this instead). If enabled, 40–100 is typical. Lower = safer but more repetitive; higher = more variety.</p>
         </div>
         <div class="gen-setting-row">
           <div class="gen-setting-label"><span>Min-P</span><span class="gen-setting-value" id="cs-lbl-min_p">0.05</span></div>
           <input type="range" id="cs-min_p" min="0" max="1" step="0.01" value="0.05" oninput="csSync('min_p',this.value,2)">
           <div class="gen-setting-bounds"><span>0 (off)</span><span>1</span></div>
-          <p class="form-hint">Minimum token probability relative to top token. 0 = disabled.</p>
+          <p class="form-hint">Cuts any word whose probability is less than this fraction of the top word's probability. Useful at high Temperature to remove truly improbable choices without killing variety. 0.05–0.1 works well alongside Temperature above 1.0. Leave at 0 if not using high Temperature.</p>
         </div>
         <div class="gen-setting-row">
           <div class="gen-setting-label"><span>Repeat Penalty</span><span class="gen-setting-value" id="cs-lbl-repeat_penalty">1.10</span></div>
           <input type="range" id="cs-repeat_penalty" min="1" max="1.5" step="0.01" value="1.10" oninput="csSync('repeat_penalty',this.value,2)">
           <div class="gen-setting-bounds"><span>1 (off)</span><span>1.5</span></div>
-          <p class="form-hint">Penalises repeating recent tokens.</p>
+          <p class="form-hint">Makes the AI less likely to reuse words it just used. 1.0 = no penalty. 1.1 is a gentle nudge that reduces word loops. 1.3+ strongly discourages repetition but can make prose feel forced. Raise this if the AI keeps repeating phrases.</p>
         </div>
         <div class="gen-setting-row">
           <div class="gen-setting-label"><span>Max Tokens</span><span class="gen-setting-value" id="cs-lbl-max_tokens">1024</span></div>
           <input type="range" id="cs-max_tokens" min="64" max="8192" step="64" value="1024" oninput="csSync('max_tokens',this.value,0)">
           <div class="gen-setting-bounds"><span>64</span><span>8192</span></div>
-          <p class="form-hint">Maximum tokens per AI response.</p>
+          <p class="form-hint">Maximum length of each AI response, measured in tokens (roughly ¾ of a word each). 512–1024 suits most roleplay exchanges. Raise to 2048+ for longer narrative scenes or detailed descriptions. Higher values use more VRAM and take longer to generate.</p>
         </div>
         <div class="gen-setting-row">
           <div class="gen-setting-label"><span>Seed</span><span class="gen-setting-value" id="cs-lbl-seed">-1</span></div>
           <input type="range" id="cs-seed" min="-1" max="999999999" step="1" value="-1" oninput="csSync('seed',this.value,0)">
           <div class="gen-setting-bounds"><span>-1 (random)</span><span>999 999 999</span></div>
-          <p class="form-hint">-1 = random seed. Fixed seed = reproducible output.</p>
+          <p class="form-hint">-1 uses a random seed every response (recommended for normal play). Set a fixed number to make the AI produce the same output for the same input — useful for testing or recreating a specific response. Any number works; the value itself doesn't matter.</p>
         </div>
       </div>
       <div class="modal-footer">

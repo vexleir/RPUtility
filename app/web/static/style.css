@@ -877,7 +877,7 @@ select option { background: var(--surface2); }
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,.75);
+  background: rgba(0,0,0,.92);
   z-index: 1000;
   display: flex;
   align-items: flex-start;
@@ -886,6 +886,38 @@ select option { background: var(--surface2); }
   overflow-y: auto;
 }
 .modal-backdrop.hidden { display: none; }
+
+/* Campaign-system modals (.modal / .modal-header / .modal-body / .modal-footer) */
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+.modal-body {
+  padding: 18px;
+}
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
 .modal-box {
   background: var(--surface);
   border: 1px solid var(--border);

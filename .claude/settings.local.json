@@ -57,7 +57,8 @@
       "Bash(python -m pytest tests/test_phase6.py::TestLoreNoteStore::test_save_and_get -q)",
       "Bash(python -c \"from app.campaigns.store import CampaignStore; from app.campaigns.world_builder import WorldBuilder; from app.campaigns.scene_prompter import build_scene_messages; from app.web.campaign_routes import router; print\\('All campaign imports OK'\\)\")",
       "Bash(python -c \"from app.web.campaign_routes import router; print\\('OK'\\)\")",
-      "Read(//c/Users/devio/.claude/plans/**)"
+      "Read(//c/Users/devio/.claude/plans/**)",
+      "Bash(ls \"c:/Antigravity Projects/RP Utility/app/web/static/\"*.css)"
     ],
     "additionalDirectories": [
       "c:\\Users\\devio\\.claude\\projects\\c--Antigravity-Projects-RP-Utility\\memory"
