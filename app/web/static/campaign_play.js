@@ -14,6 +14,7 @@ let _npcs = [];
 let _threads = [];
 let _facts = [];
 let _streaming = false;
+let _streamAbort = null;   // AbortController for the active streaming fetch
 let _userName = "Player";
 
 // ── Regenerate state ──────────────────────────────────────────────────────────
@@ -452,6 +453,7 @@ async function sendMessage() {
   _streaming = true;
   setSendEnabled(false);
 
+  _streamAbort = new AbortController();
   const aiDiv = appendStreamingMessage();
   let buffer = "";
 
@@ -460,6 +462,7 @@ async function sendMessage() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: text, user_name: _userName, ...gsGetParams() }),
+      signal: _streamAbort.signal,
     });
 
     if (!res.ok) {
@@ -489,9 +492,16 @@ async function sendMessage() {
     _trackAiResponse(aiDiv, buffer, _scene.turns.length - 1);
 
   } catch (e) {
-    aiDiv.innerHTML = `<span class="error-text">Error: ${escHtml(e.message)}</span>`;
-    showError(e.message);
+    if (e.name === "AbortError") {
+      // User stopped — remove the partial bubble and user message div
+      aiDiv.remove();
+      userDiv.remove();
+    } else {
+      aiDiv.innerHTML = `<span class="error-text">Error: ${escHtml(e.message)}</span>`;
+      showError(e.message);
+    }
   } finally {
+    _streamAbort = null;
     _streaming = false;
     setSendEnabled(true);
     updateUndoButton();
@@ -508,6 +518,7 @@ async function continueStory() {
   // Reset regenerate state — new exchange begins
   _clearRegenState();
 
+  _streamAbort = new AbortController();
   _streaming = true;
   setSendEnabled(false);
 
@@ -519,6 +530,7 @@ async function continueStory() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: continueMsg, user_name: "__continue__", ...gsGetParams() }),
+      signal: _streamAbort.signal,
     });
 
     if (!res.ok) {
@@ -545,9 +557,14 @@ async function continueStory() {
     _trackAiResponse(aiDiv, buffer, _scene.turns.length - 1);
 
   } catch (e) {
-    aiDiv.innerHTML = `<span class="error-text">Error: ${escHtml(e.message)}</span>`;
-    showError(e.message);
+    if (e.name === "AbortError") {
+      aiDiv.remove();
+    } else {
+      aiDiv.innerHTML = `<span class="error-text">Error: ${escHtml(e.message)}</span>`;
+      showError(e.message);
+    }
   } finally {
+    _streamAbort = null;
     _streaming = false;
     setSendEnabled(true);
     updateUndoButton();
@@ -740,6 +757,7 @@ async function regenerate() {
   _lastAiDiv.classList.add("streaming");
   _lastAiDiv.innerHTML = '<span class="typing-dot"></span>';
 
+  _streamAbort = new AbortController();
   _streaming = true;
   setSendEnabled(false);
 
@@ -750,6 +768,7 @@ async function regenerate() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...gsGetParams() }),
+      signal: _streamAbort.signal,
     });
 
     if (!res.ok) {
@@ -783,10 +802,17 @@ async function regenerate() {
 
   } catch (e) {
     _lastAiDiv.classList.remove("streaming");
-    _lastAiDiv.innerHTML = `<span class="error-text">Error: ${escHtml(e.message)}</span>`;
-    showError(e.message);
-    _renderRegenControls(); // restore the controls even on error
+    if (e.name === "AbortError") {
+      // Restore previous content (last accepted alternative or empty)
+      const prev = _alternatives[_altIdx] ?? "";
+      _lastAiDiv.innerHTML = marked.parse(prev);
+    } else {
+      _lastAiDiv.innerHTML = `<span class="error-text">Error: ${escHtml(e.message)}</span>`;
+      showError(e.message);
+    }
+    _renderRegenControls();
   } finally {
+    _streamAbort = null;
     _streaming = false;
     setSendEnabled(true);
     updateUndoButton();
@@ -1181,29 +1207,35 @@ async function applyWorldUpdates() {
   const { npc_updates = [], new_facts = [], thread_updates = [], new_npcs = [], new_locations = [],
           history_updates = [], form_transitions = [] } = _pendingSuggestions;
 
-  // Apply checked NPC updates
+  const failures = [];
+
+  const _put = async (url, body, label) => {
+    try {
+      const res = await fetch(url, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (e) {
+      failures.push(`${label}: ${e.message}`);
+    }
+  };
+
+  // Apply checked NPC field updates
   const checkedNpcs = [...document.querySelectorAll(".wu-npc-cb:checked")].map(cb => npc_updates[+cb.dataset.index]);
   for (const u of checkedNpcs) {
     const npc = _npcs.find(n => n.id === u.npc_id);
     if (!npc) continue;
-    const updated = { ...npc, [u.field]: u.suggested_value };
-    await fetch(`/api/campaigns/${CAMPAIGN_ID}/npcs`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updated),
-    }).catch(() => {});
+    await _put(`/api/campaigns/${CAMPAIGN_ID}/npcs`, { ...npc, [u.field]: u.suggested_value },
+      `NPC update: ${u.npc_name} (${u.field})`);
   }
 
   // Apply checked new facts — append to existing facts
   const checkedFacts = [...document.querySelectorAll(".wu-fact-cb:checked")].map(cb => new_facts[+cb.dataset.index]);
   if (checkedFacts.length) {
-    const existingContents = _facts.map(f => f.content);
-    const allFacts = [...existingContents, ...checkedFacts.map(f => f.content)];
-    await fetch(`/api/campaigns/${CAMPAIGN_ID}/world-facts`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ facts: allFacts }),
-    }).catch(() => {});
+    const allFacts = [..._facts.map(f => f.content), ...checkedFacts.map(f => f.content)];
+    await _put(`/api/campaigns/${CAMPAIGN_ID}/world-facts`, { facts: allFacts }, "World facts");
   }
 
   // Apply checked thread status updates
@@ -1212,74 +1244,68 @@ async function applyWorldUpdates() {
     const thread = _threads.find(t => t.id === u.thread_id)
       || (await fetch(`/api/campaigns/${CAMPAIGN_ID}/threads`).then(r => r.json()).catch(() => []))
           .find(t => t.id === u.thread_id);
-    if (!thread) continue;
-    await fetch(`/api/campaigns/${CAMPAIGN_ID}/threads`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...thread, status: u.new_status }),
-    }).catch(() => {});
+    if (!thread) { failures.push(`Thread not found: ${u.thread_title}`); continue; }
+    await _put(`/api/campaigns/${CAMPAIGN_ID}/threads`, { ...thread, status: u.new_status },
+      `Thread: ${u.thread_title}`);
   }
 
   // Create approved new NPCs — read values from editable card inputs
   const acceptedNpcCards = [...document.querySelectorAll(".wu-npc-proposal-card:not(.rejected)")];
   for (const card of acceptedNpcCards) {
     const f = (id) => card.querySelector(`[data-field="${id}"]`)?.value?.trim() || "";
-    await fetch(`/api/campaigns/${CAMPAIGN_ID}/npcs`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name:                   f("name"),
-        role:                   f("role"),
-        gender:                 f("gender"),
-        age:                    f("age"),
-        appearance:             f("appearance"),
-        personality:            f("personality"),
-        relationship_to_player: f("relationship_to_player"),
-        current_location:       f("current_location"),
-        current_state:          f("current_state"),
-        short_term_goal:        f("short_term_goal"),
-        long_term_goal:         f("long_term_goal"),
-        secrets:                f("secrets"),
-      }),
-    }).catch(() => {});
+    const name = f("name") || "Unknown";
+    await _put(`/api/campaigns/${CAMPAIGN_ID}/npcs`, {
+      name,
+      role:                   f("role"),
+      gender:                 f("gender"),
+      age:                    f("age"),
+      appearance:             f("appearance"),
+      personality:            f("personality"),
+      relationship_to_player: f("relationship_to_player"),
+      current_location:       f("current_location"),
+      current_state:          f("current_state"),
+      short_term_goal:        f("short_term_goal"),
+      long_term_goal:         f("long_term_goal"),
+      secrets:                f("secrets"),
+    }, `New NPC: ${name}`);
   }
 
   // Create approved new locations
   const checkedNewLocs = [...document.querySelectorAll(".wu-new-loc-cb:checked")].map(cb => new_locations[+cb.dataset.index]);
   for (const l of checkedNewLocs) {
-    await fetch(`/api/campaigns/${CAMPAIGN_ID}/places`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: l.name,
-        description: l.description || "",
-        current_state: l.current_state || "",
-      }),
-    }).catch(() => {});
+    await _put(`/api/campaigns/${CAMPAIGN_ID}/places`, {
+      name: l.name,
+      description: l.description || "",
+      current_state: l.current_state || "",
+    }, `New location: ${l.name}`);
   }
 
   // Apply checked history updates
   const checkedHistory = [...document.querySelectorAll(".wu-history-cb:checked")].map(cb => history_updates[+cb.dataset.index]);
   for (const h of checkedHistory) {
     const npc = _npcs.find(n => n.id === h.npc_id);
-    if (!npc) continue;
-    await fetch(`/api/campaigns/${CAMPAIGN_ID}/npcs`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...npc, history_with_player: h.new_history }),
-    }).catch(() => {});
+    if (!npc) { failures.push(`NPC not found for history update: ${h.npc_name}`); continue; }
+    await _put(`/api/campaigns/${CAMPAIGN_ID}/npcs`, { ...npc, history_with_player: h.new_history },
+      `History update: ${h.npc_name}`);
   }
 
   // Apply checked form transitions
   const checkedForms = [...document.querySelectorAll(".wu-form-cb:checked")].map(cb => form_transitions[+cb.dataset.index]);
   for (const t of checkedForms) {
     const npc = _npcs.find(n => n.id === t.npc_id);
-    if (!npc) continue;
-    await fetch(`/api/campaigns/${CAMPAIGN_ID}/npcs`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...npc, active_form: t.new_active_form || null }),
-    }).catch(() => {});
+    if (!npc) { failures.push(`NPC not found for form transition: ${t.npc_name}`); continue; }
+    await _put(`/api/campaigns/${CAMPAIGN_ID}/npcs`, { ...npc, active_form: t.new_active_form || null },
+      `Form transition: ${t.npc_name}`);
+  }
+
+  if (failures.length) {
+    applyBtn.disabled = false;
+    applyBtn.textContent = "Apply";
+    showBanner(
+      `${failures.length} update(s) failed to save:\n• ${failures.join("\n• ")}`,
+      "error"
+    );
+    return;
   }
 
   skipWorldUpdates();
@@ -1458,6 +1484,7 @@ function runSceneSearch() {
 
 async function undoLastTurn() {
   if (_streaming || !_scene) return;
+  if (!confirm("Remove the last exchange? This cannot be undone.")) return;
   try {
     const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${_scene.id}/turns/last`, {
       method: "DELETE",
@@ -1572,6 +1599,18 @@ function setSendEnabled(enabled) {
   document.getElementById("send-btn").disabled = !enabled;
   const continueBtn = document.getElementById("continue-btn");
   if (continueBtn) continueBtn.disabled = !enabled;
+  const stopBtn = document.getElementById("stop-btn");
+  if (stopBtn) {
+    if (enabled) stopBtn.classList.add("hidden");
+    else stopBtn.classList.remove("hidden");
+  }
+}
+
+function stopStreaming() {
+  if (_streamAbort) {
+    _streamAbort.abort();
+    _streamAbort = null;
+  }
 }
 
 function scrollToBottom() {

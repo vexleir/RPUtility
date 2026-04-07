@@ -2430,21 +2430,31 @@ def scene_chat_stream(campaign_id: str, scene_id: str, req: SceneChatRequest):
 
 # ── Post-scene AI tools ───────────────────────────────────────────────────────
 
-_SUGGEST_SUMMARY_SYSTEM = """You are a transcript indexer. Your only job is to extract events from a numbered roleplay transcript and list them, one per line, with the turn number they came from.
+_SUGGEST_SUMMARY_SYSTEM = """You are a story archivist. Your job is to extract the most narratively significant moments from a roleplay transcript — the events that will matter in future scenes.
 
 CRITICAL RULES:
 - You are NOT a storyteller. Do NOT write fiction, narration, or creative prose.
-- You are NOT a narrator or character. The scene is FINISHED — do not continue it.
-- Every line you write MUST cite the exact turn number it came from using [Turn N].
-- If you cannot point to a specific turn that supports a claim, you MUST NOT include it.
-- Do NOT infer, speculate, or add ANY detail not explicitly present in the cited turn.
-- Do NOT merge or paraphrase multiple turns into one statement — cite only one turn per line.
-- Do NOT embellish, add atmosphere, or use creative language.
+- The scene is FINISHED — do not continue it.
+- Every line MUST cite the turn number it came from using [Turn N].
+- Do NOT infer or add detail not present in the transcript.
+- Do NOT capture small talk, minor reactions, or atmosphere — only record events with lasting consequence.
 
-Output format — one line per event, strictly:
-- [Turn N] Past-tense statement of exactly what happened in that turn.
+WHAT TO CAPTURE (aim for 6–12 entries total):
+- Major decisions or actions taken by the player
+- Significant revelations, secrets disclosed, or lore established
+- Meaningful shifts in a relationship, alliance, or conflict
+- Character transformations, deaths, or status changes
+- Outcomes that will affect future scenes
 
-Work chronologically from Turn 1 to the last turn. Include every significant action, statement, decision, and outcome. Omit only trivial filler with no story consequence.
+WHAT TO SKIP:
+- Dialogue that restates something already captured
+- NPC reactions with no lasting impact
+- Atmosphere, descriptions, and tone-setting
+- Anything a future scene could reconstruct without this entry
+
+Output format — one line per event:
+- [Turn N] Past-tense statement of what happened and why it matters.
+
 Output ONLY the list — no title, no preamble, no closing sentence."""
 
 _SUGGEST_UPDATES_SYSTEM = """Extract world-document entries from a completed roleplay scene.
@@ -2471,7 +2481,7 @@ REQUIRED JSON FORMAT (all seven keys must be present, use [] if nothing qualifie
     {"thread_id":"exact-uuid", "thread_title":"...", "new_status":"resolved", "reason":"..."}
   ],
   "history_updates": [
-    {"npc_id":"exact-uuid", "npc_name":"...", "addition":"one-sentence summary of what happened between this NPC and the player in this scene", "reason":"..."}
+    {"npc_id":"exact-uuid", "npc_name":"...", "new_history":"one sentence appended to the NPC's history with player — what happened between them in this scene", "reason":"..."}
   ],
   "form_transitions": [
     {"npc_id":"exact-uuid", "npc_name":"...", "new_form_label":"...", "new_appearance":"...", "new_personality":"...", "new_current_state":"...", "reason":"..."}
@@ -2490,12 +2500,12 @@ npc_updates: Changes to characters already in the CURRENT NPCs list. Valid field
 
 thread_updates: Narrative threads already in the list that were resolved or went dormant. Match by exact uuid.
 
-history_updates: For any NPC in the CURRENT NPCs list who had a meaningful interaction with the player in this scene — add a brief note to their history. One entry per NPC, one sentence. Only include if something significant happened (trust gained/lost, secret shared, conflict, alliance, etc.).
+history_updates: For any NPC in the CURRENT NPCs list who had a meaningful interaction with the player in this scene — write one sentence for new_history describing what happened. One entry per NPC. Only include if something significant happened (trust gained/lost, secret shared, conflict, alliance, etc.).
 
 form_transitions: If any NPC in the CURRENT NPCs list visibly changed their physical form, appearance, or fundamental personality during this scene (transformation, shapeshifting, corruption, revealed disguise, possession, etc.) — record the new form. Leave new_form_label short and descriptive (e.g. "Wolf Form", "Corrupted", "True Form").
 
 EXAMPLE — given a scene where Oren (already in the NPC list) revealed a dragon collar secret to the player, then transformed into a wolf at scene's end, the correct output includes:
-{"new_npcs":[],"new_locations":[],"new_facts":[{"content":"Dragons are controlled by magical collars; removing the collar frees them.","reason":"Oren revealed this to the player"}],"npc_updates":[],"thread_updates":[],"history_updates":[{"npc_id":"oren-uuid","npc_name":"Oren","addition":"Shared the secret of dragon collars with the player, revealing his true nature as a shapeshifter.","reason":"Major trust moment and revelation"}],"form_transitions":[{"npc_id":"oren-uuid","npc_name":"Oren","new_form_label":"Wolf Form","new_appearance":"massive grey wolf, amber eyes, a scar across the left flank","new_personality":"primal, protective, still recognises the player","new_current_state":"transformed, guarding the forge entrance","reason":"Transformed at scene end when threatened"}]}"""
+{"new_npcs":[],"new_locations":[],"new_facts":[{"content":"Dragons are controlled by magical collars; removing the collar frees them.","reason":"Oren revealed this to the player"}],"npc_updates":[],"thread_updates":[],"history_updates":[{"npc_id":"oren-uuid","npc_name":"Oren","new_history":"Shared the secret of dragon collars with the player, revealing his true nature as a shapeshifter.","reason":"Major trust moment and revelation"}],"form_transitions":[{"npc_id":"oren-uuid","npc_name":"Oren","new_form_label":"Wolf Form","new_appearance":"massive grey wolf, amber eyes, a scar across the left flank","new_personality":"primal, protective, still recognises the player","new_current_state":"transformed, guarding the forge entrance","reason":"Transformed at scene end when threatened"}]}"""
 
 
 class SuggestSummaryRequest(BaseModel):
@@ -2542,7 +2552,7 @@ def suggest_scene_summary(campaign_id: str, scene_id: str, req: SuggestSummaryRe
             "options": {
                 "temperature": 0.1,
                 "num_predict": 1024,
-                "num_ctx": config.context_window,
+                "num_ctx": campaign.gen_settings.context_window if campaign else config.context_window,
             },
         }
         r = httpx.post(
@@ -2631,8 +2641,22 @@ def suggest_world_updates(campaign_id: str, scene_id: str):
         for t in visible_turns
     ]
 
+    # Include recent chronicle so the model knows what is already recorded
+    chronicle_entries = _chronicle().get_all(campaign_id)
+    prior_entries = [
+        e for e in sorted(chronicle_entries, key=lambda x: x.scene_range_start)
+        if not (e.scene_range_start == scene.scene_number and e.scene_range_end == scene.scene_number)
+    ][-5:]  # last 5 prior scenes only
+
     # Build prompt — put the content FIRST so the model reads scene before exclusion lists
     parts = []
+    if prior_entries:
+        chron_lines = ["[STORY SO FAR — already recorded, do NOT re-extract these events]"]
+        for e in prior_entries:
+            label = f"Scene {e.scene_range_start}" if e.scene_range_start == e.scene_range_end \
+                else f"Scenes {e.scene_range_start}–{e.scene_range_end}"
+            chron_lines.append(f"[{label}]\n{e.content}")
+        parts.append("\n".join(chron_lines))
     if scene.confirmed_summary:
         parts.append(f"[CONFIRMED SCENE SUMMARY]\n{scene.confirmed_summary}")
     if transcript_lines:
@@ -2667,7 +2691,8 @@ def suggest_world_updates(campaign_id: str, scene_id: str):
             ],
             "stream": False,
             "think": False,
-            "options": {"temperature": 0.5, "num_predict": 8192, "num_ctx": config.context_window},
+            "options": {"temperature": 0.5, "num_predict": 8192,
+                        "num_ctx": campaign.gen_settings.context_window if campaign else config.context_window},
         }
         r = httpx.post(
             f"{config.ollama_base_url.rstrip('/')}/api/chat",

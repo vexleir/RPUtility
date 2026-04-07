@@ -580,9 +580,9 @@ class GenSettings(BaseModel):
     top_k: int = 0
     min_p: float = 0.05
     repeat_penalty: float = 1.10
-    max_tokens: int = 1024
+    max_tokens: int = 2000
     seed: int = -1
-    context_window: int = 32768
+    context_window: int = 16384
 
 
 class Campaign(BaseModel):

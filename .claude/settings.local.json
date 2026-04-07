@@ -59,7 +59,8 @@
       "Bash(python -c \"from app.web.campaign_routes import router; print\\('OK'\\)\")",
       "Read(//c/Users/devio/.claude/plans/**)",
       "Bash(ls \"c:/Antigravity Projects/RP Utility/app/web/static/\"*.css)",
-      "Bash(python -m pytest tests/test_scene.py --tb=short -q)"
+      "Bash(python -m pytest tests/test_scene.py --tb=short -q)",
+      "Bash(python -m pytest tests/test_scene.py -x --tb=long -q)"
     ],
     "additionalDirectories": [
       "c:\\Users\\devio\\.claude\\projects\\c--Antigravity-Projects-RP-Utility\\memory"

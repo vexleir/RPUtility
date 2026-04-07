@@ -590,6 +590,19 @@ def _migrate(conn: sqlite3.Connection) -> None:
         )
     """)
 
+    # Indexes for campaign-scoped lookups — placed after all CREATE TABLEs above
+    for _idx in [
+        "CREATE INDEX IF NOT EXISTS idx_scenes_campaign ON campaign_scenes(campaign_id)",
+        "CREATE INDEX IF NOT EXISTS idx_npc_cards_campaign ON npc_cards(campaign_id)",
+        "CREATE INDEX IF NOT EXISTS idx_world_facts_campaign ON campaign_world_facts(campaign_id)",
+        "CREATE INDEX IF NOT EXISTS idx_places_campaign ON campaign_places(campaign_id)",
+        "CREATE INDEX IF NOT EXISTS idx_threads_campaign ON narrative_threads(campaign_id)",
+        "CREATE INDEX IF NOT EXISTS idx_chronicle_campaign ON chronicle_entries(campaign_id)",
+        "CREATE INDEX IF NOT EXISTS idx_factions_campaign ON campaign_factions(campaign_id)",
+        "CREATE INDEX IF NOT EXISTS idx_npc_relationships_campaign ON npc_relationships(campaign_id)",
+    ]:
+        conn.execute(_idx)
+
 
 def _create_tables(conn: sqlite3.Connection) -> None:
     conn.executescript("""

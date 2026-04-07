@@ -114,7 +114,7 @@ def build_scene_messages(
             messages.append({"role": turn.role, "content": turn.content})
 
     # Current player input
-    if user_name and user_name.lower() not in ("player", "user", ""):
+    if user_name and user_name.lower() not in ("player", "user", "", "__continue__"):
         messages.append({"role": "user", "content": f"[{user_name}]: {user_message}"})
     else:
         messages.append({"role": "user", "content": user_message})
@@ -276,16 +276,18 @@ def _build_system(
             if curr_state:    line += f" | Currently: {curr_state}"
             npc_block.append(line)
 
+            if appearance:
+                npc_block.append(f"  Appearance: {appearance}")
+
             # If in a different form, note original identity
             if active_form:
                 orig_parts = []
-                if n.appearance:  orig_parts.append(f"appearance: {n.appearance}")
-                if n.personality: orig_parts.append(f"personality: {n.personality}")
+                if n.appearance and n.appearance != appearance:
+                    orig_parts.append(f"appearance: {n.appearance}")
+                if n.personality and n.personality != personality:
+                    orig_parts.append(f"personality: {n.personality}")
                 if orig_parts:
                     npc_block.append(f"  Original form: {'; '.join(orig_parts)}")
-
-            if appearance and appearance != (active_form.appearance if active_form else ""):
-                pass  # already shown via personality line above
 
             if n.relationship_to_player:
                 npc_block.append(f"  Relationship to {pc_name}: {n.relationship_to_player}")

@@ -231,8 +231,7 @@ function renderScenesList() {
       ? '<span class="scene-badge confirmed">Confirmed</span>'
       : '<span class="scene-badge active">In Progress</span>';
     const turnCount = s.turns?.length || 0;
-    const sid = escHtml(s.id);
-    const summaryEsc = (s.confirmed_summary || "").replace(/\\/g, "\\\\").replace(/`/g, "\\`");
+    const sid = s.id;
     div.innerHTML = `
       <div class="scene-card-header">
         <div>
@@ -241,9 +240,9 @@ function renderScenesList() {
           ${badge}
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          ${turnCount > 0 ? `<button class="btn btn-sm btn-ghost" onclick="viewSceneTranscript(${JSON.stringify(s).replace(/"/g, '&quot;')})">📜 Read</button>` : ""}
-          ${s.confirmed ? `<button class="btn btn-sm btn-ghost" onclick="editSceneSummary('${sid}', \`${summaryEsc}\`, ${s.scene_number})">✏ Summary</button>` : ""}
-          ${s.confirmed ? `<button class="btn btn-sm btn-ghost" onclick="reopenScene('${sid}')">↩ Reopen</button>` : ""}
+          ${turnCount > 0 ? `<button class="btn btn-sm btn-ghost" data-scene-id="${escHtml(sid)}" onclick="_viewTranscriptById(this)">📜 Read</button>` : ""}
+          ${s.confirmed ? `<button class="btn btn-sm btn-ghost" data-scene-id="${escHtml(sid)}" onclick="_editSummaryById(this)">✏ Summary</button>` : ""}
+          ${s.confirmed ? `<button class="btn btn-sm btn-ghost" onclick="reopenScene('${escHtml(sid)}')">↩ Reopen</button>` : ""}
           ${!s.confirmed ? `<a href="/campaigns/${CAMPAIGN_ID}/play" class="btn btn-sm">▶ Continue</a>` : ""}
         </div>
       </div>
@@ -252,6 +251,17 @@ function renderScenesList() {
     `;
     container.appendChild(div);
   });
+}
+
+function _editSummaryById(btn) {
+  const scene = _scenes.find(s => s.id === btn.dataset.sceneId);
+  if (!scene) return;
+  editSceneSummary(scene.id, scene.confirmed_summary || "", scene.scene_number);
+}
+
+function _viewTranscriptById(btn) {
+  const scene = _scenes.find(s => s.id === btn.dataset.sceneId);
+  if (scene) viewSceneTranscript(scene);
 }
 
 async function reopenScene(sceneId) {
@@ -337,6 +347,12 @@ async function saveSceneSummary() {
     const idx = _scenes.findIndex(s => s.id === sceneId);
     if (idx >= 0) _scenes[idx] = updated;
     renderScenesList();
+    // Refresh chronicle so the updated summary appears there too
+    const chronicleRes = await fetch(`/api/campaigns/${CAMPAIGN_ID}/chronicle`);
+    if (chronicleRes.ok) {
+      _chronicle = await chronicleRes.json();
+      renderChronicle();
+    }
     closeModal("edit-summary-modal");
     showBanner("Summary saved.", "success");
   } catch (e) {
@@ -1480,7 +1496,7 @@ function csSync(key, value, decimals) {
 }
 
 function csResetDefaults() {
-  const defaults = { temperature:0.80, top_p:0.95, top_k:0, min_p:0.05, repeat_penalty:1.10, max_tokens:1024, seed:-1, context_window:32768 };
+  const defaults = { temperature:0.80, top_p:0.95, top_k:0, min_p:0.05, repeat_penalty:1.10, max_tokens:2000, seed:-1, context_window:16384 };
   for (const [k, v] of Object.entries(defaults)) {
     const el = document.getElementById(`cs-${k}`);
     if (el) { el.value = v; csSync(k, v, ["temperature","top_p","min_p","repeat_penalty"].includes(k) ? 2 : 0); }
@@ -1513,7 +1529,7 @@ async function openEditCampaign() {
 
   // Populate gen settings sliders
   const gs = _campaign?.gen_settings || {};
-  const defaults = { temperature:0.80, top_p:0.95, top_k:0, min_p:0.05, repeat_penalty:1.10, max_tokens:1024, seed:-1, context_window:32768 };
+  const defaults = { temperature:0.80, top_p:0.95, top_k:0, min_p:0.05, repeat_penalty:1.10, max_tokens:2000, seed:-1, context_window:16384 };
   for (const [k, def] of Object.entries(defaults)) {
     const v = gs[k] ?? def;
     const el = document.getElementById(`cs-${k}`);
