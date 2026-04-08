@@ -14,7 +14,7 @@
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
-const IMGGEN_COMFY_KEY = "rp_comfy_settings_v2";
+const IMGGEN_COMFY_KEY = "rp_comfy_settings_v3";
 
 let _imggenCtx = null;   // { type, npcId?, npcName?, sceneId?, lastMessage? }
 
@@ -146,23 +146,38 @@ async function submitImgGen() {
   btn.textContent = "Generating…";
   statusEl.textContent = "Sending to ComfyUI… this may take a minute.";
 
-  const settings = _getComfySettings();
   _saveComfySettings();   // persist current field values
+
+  const workflowType = document.getElementById("imggen-workflow-type").value || "sd";
+
+  const body = {
+    prompt,
+    negative_prompt: document.getElementById("imggen-negative").value || "lowres, bad anatomy, blurry, watermark",
+    width:        parseInt(document.getElementById("imggen-width").value)  || 512,
+    height:       parseInt(document.getElementById("imggen-height").value) || 768,
+    steps:        parseInt(document.getElementById("imggen-steps").value)  || 20,
+    cfg:          parseFloat(document.getElementById("imggen-cfg").value)  || 7,
+    checkpoint:   document.getElementById("imggen-checkpoint").value.trim() || "",
+    comfyui_url:  document.getElementById("imggen-comfy-url").value.trim() || "http://localhost:8188",
+    workflow_type: workflowType,
+  };
+
+  if (workflowType === "flux") {
+    body.flux_clip1    = document.getElementById("imggen-flux-clip1").value.trim()    || "t5xxl_fp8_e4m3fn.safetensors";
+    body.flux_clip2    = document.getElementById("imggen-flux-clip2").value.trim()    || "clip_l.safetensors";
+    body.flux_vae      = document.getElementById("imggen-flux-vae").value.trim()      || "ae.safetensors";
+    body.flux_guidance = parseFloat(document.getElementById("imggen-flux-guidance").value) || 3.5;
+  }
+
+  if (workflowType === "custom") {
+    body.custom_workflow = document.getElementById("imggen-custom-workflow").value.trim();
+  }
 
   try {
     const res = await fetch("/api/comfyui/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt,
-        negative_prompt: document.getElementById("imggen-negative").value || "lowres, bad anatomy, blurry, watermark",
-        width:      parseInt(document.getElementById("imggen-width").value)  || 512,
-        height:     parseInt(document.getElementById("imggen-height").value) || 768,
-        steps:      parseInt(document.getElementById("imggen-steps").value)  || 20,
-        cfg:        parseFloat(document.getElementById("imggen-cfg").value)  || 7,
-        checkpoint: document.getElementById("imggen-checkpoint").value.trim() || "",
-        comfyui_url: document.getElementById("imggen-comfy-url").value.trim() || "http://localhost:8188",
-      }),
+      body: JSON.stringify(body),
     });
 
     if (!res.ok) {
@@ -308,6 +323,35 @@ function insertImgGenToChat() {
   }
 }
 
+// ── Workflow type toggle ──────────────────────────────────────────────────────
+
+function onImgGenWorkflowChange() {
+  const type = document.getElementById("imggen-workflow-type").value;
+  const isFlux   = type === "flux";
+  const isCustom = type === "custom";
+
+  document.getElementById("imggen-flux-fields").style.display   = isFlux   ? "" : "none";
+  document.getElementById("imggen-custom-fields").style.display = isCustom ? "" : "none";
+
+  // CFG note and opacity
+  const cfgRow  = document.getElementById("imggen-cfg-row");
+  const negRow  = document.getElementById("imggen-neg-row");
+  const cfgNote = document.getElementById("imggen-flux-note");
+  const negNote = document.getElementById("imggen-neg-flux-note");
+  if (cfgRow)  cfgRow.style.opacity  = isFlux ? "0.45" : "";
+  if (negRow)  negRow.style.opacity  = isFlux ? "0.45" : "";
+  if (cfgNote) cfgNote.style.display = isFlux ? "" : "none";
+  if (negNote) negNote.textContent   = isFlux ? "(unused by Flux)" : "";
+
+  // Relabel checkpoint field for Flux
+  const ckLabel = document.getElementById("imggen-checkpoint-label");
+  if (ckLabel) {
+    ckLabel.innerHTML = isFlux
+      ? 'UNET Model <span class="muted dim">(e.g. flux1-dev.safetensors)</span>'
+      : 'Checkpoint <span class="muted dim">(leave blank to auto-detect)</span>';
+  }
+}
+
 // ── ComfyUI checkpoint listing ────────────────────────────────────────────────
 
 async function fetchImgGenCheckpoints() {
@@ -337,26 +381,40 @@ function _getComfySettings() {
 
 function _restoreComfySettings() {
   const s = _getComfySettings();
-  if (s.comfyui_url) document.getElementById("imggen-comfy-url").value  = s.comfyui_url;
-  if (s.checkpoint)  document.getElementById("imggen-checkpoint").value  = s.checkpoint;
-  if (s.width)       document.getElementById("imggen-width").value       = s.width;
-  if (s.height)      document.getElementById("imggen-height").value      = s.height;
-  if (s.steps)       document.getElementById("imggen-steps").value       = s.steps;
-  if (s.cfg)         document.getElementById("imggen-cfg").value         = s.cfg;
-  if (s.negative)    document.getElementById("imggen-negative").value    = s.negative;
-  if (s.style_tags)  document.getElementById("imggen-style-tags").value  = s.style_tags;
+  if (s.comfyui_url)     document.getElementById("imggen-comfy-url").value      = s.comfyui_url;
+  if (s.checkpoint)      document.getElementById("imggen-checkpoint").value      = s.checkpoint;
+  if (s.width)           document.getElementById("imggen-width").value           = s.width;
+  if (s.height)          document.getElementById("imggen-height").value          = s.height;
+  if (s.steps)           document.getElementById("imggen-steps").value           = s.steps;
+  if (s.cfg)             document.getElementById("imggen-cfg").value             = s.cfg;
+  if (s.negative)        document.getElementById("imggen-negative").value        = s.negative;
+  if (s.style_tags)      document.getElementById("imggen-style-tags").value      = s.style_tags;
+  if (s.workflow_type)   document.getElementById("imggen-workflow-type").value   = s.workflow_type;
+  if (s.flux_clip1)      document.getElementById("imggen-flux-clip1").value      = s.flux_clip1;
+  if (s.flux_clip2)      document.getElementById("imggen-flux-clip2").value      = s.flux_clip2;
+  if (s.flux_vae)        document.getElementById("imggen-flux-vae").value        = s.flux_vae;
+  if (s.flux_guidance)   document.getElementById("imggen-flux-guidance").value   = s.flux_guidance;
+  if (s.custom_workflow) document.getElementById("imggen-custom-workflow").value = s.custom_workflow;
+  // Apply show/hide state for whatever type was restored
+  onImgGenWorkflowChange();
 }
 
 function _saveComfySettings() {
   const s = {
-    comfyui_url: document.getElementById("imggen-comfy-url").value.trim(),
-    checkpoint:  document.getElementById("imggen-checkpoint").value.trim(),
-    width:       document.getElementById("imggen-width").value,
-    height:      document.getElementById("imggen-height").value,
-    steps:       document.getElementById("imggen-steps").value,
-    cfg:         document.getElementById("imggen-cfg").value,
-    negative:    document.getElementById("imggen-negative").value,
-    style_tags:  document.getElementById("imggen-style-tags").value,
+    comfyui_url:     document.getElementById("imggen-comfy-url").value.trim(),
+    checkpoint:      document.getElementById("imggen-checkpoint").value.trim(),
+    width:           document.getElementById("imggen-width").value,
+    height:          document.getElementById("imggen-height").value,
+    steps:           document.getElementById("imggen-steps").value,
+    cfg:             document.getElementById("imggen-cfg").value,
+    negative:        document.getElementById("imggen-negative").value,
+    style_tags:      document.getElementById("imggen-style-tags").value,
+    workflow_type:   document.getElementById("imggen-workflow-type").value,
+    flux_clip1:      document.getElementById("imggen-flux-clip1").value.trim(),
+    flux_clip2:      document.getElementById("imggen-flux-clip2").value.trim(),
+    flux_vae:        document.getElementById("imggen-flux-vae").value.trim(),
+    flux_guidance:   document.getElementById("imggen-flux-guidance").value,
+    custom_workflow: document.getElementById("imggen-custom-workflow").value,
   };
   localStorage.setItem(IMGGEN_COMFY_KEY, JSON.stringify(s));
 }

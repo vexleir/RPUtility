@@ -1719,6 +1719,28 @@ class ComfyUIGenerateRequest(BaseModel):
     cfg: float = 7.0
     checkpoint: str = ""          # empty = auto-detect first available
     comfyui_url: str = "http://localhost:8188"
+    # Workflow selection
+    workflow_type: str = "sd"     # "sd" | "flux" | "custom"
+    # Flux-specific model file names
+    flux_clip1: str = "t5xxl_fp8_e4m3fn.safetensors"
+    flux_clip2: str = "clip_l.safetensors"
+    flux_vae: str = "ae.safetensors"
+    flux_guidance: float = 3.5
+    # Custom workflow: raw ComfyUI API JSON with optional {{placeholder}} values
+    custom_workflow: str = ""
+
+
+def _substitute_workflow(node, subs: dict):
+    """Recursively replace {{key}} placeholders in all string values of a workflow dict."""
+    if isinstance(node, dict):
+        return {k: _substitute_workflow(v, subs) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_substitute_workflow(v, subs) for v in node]
+    if isinstance(node, str):
+        for key, val in subs.items():
+            node = node.replace(f"{{{{{key}}}}}", str(val))
+        return node
+    return node
 
 
 @app.post("/api/comfyui/generate")
@@ -1726,28 +1748,82 @@ async def api_comfyui_generate(req: ComfyUIGenerateRequest):
     """Proxy image generation to a locally running ComfyUI instance."""
     import asyncio
     import base64
+    import json as _json
     import random
 
     base = req.comfyui_url.rstrip("/")
+    seed = random.randint(0, 2**32 - 1)
 
-    async with __import__("httpx").AsyncClient(timeout=10.0) as client:
-        # ── Resolve checkpoint ──────────────────────────────────────────
-        checkpoint = req.checkpoint
-        if not checkpoint:
-            try:
-                r = await client.get(f"{base}/object_info/CheckpointLoaderSimple")
-                r.raise_for_status()
-                info = r.json()
-                ckpts = info.get("CheckpointLoaderSimple", {}).get(
-                    "input", {}).get("required", {}).get("ckpt_name", [[]])[0]
-                checkpoint = ckpts[0] if ckpts else ""
-            except Exception as e:
-                raise HTTPException(502, f"Could not reach ComfyUI at {base}: {e}")
-        if not checkpoint:
-            raise HTTPException(400, "No checkpoint found in ComfyUI. Load a model first.")
+    # ── Build workflow ──────────────────────────────────────────────────
+    if req.workflow_type == "flux":
+        # Flux uses separate UNET / CLIP / VAE loaders and FluxGuidance instead of CFG.
+        # The checkpoint field is treated as the UNET model filename.
+        unet = req.checkpoint or ""
+        if not unet:
+            raise HTTPException(400, "Flux workflow requires a UNET model filename in the Checkpoint field.")
+        workflow = {
+            "1": {"class_type": "UNETLoader",
+                  "inputs": {"unet_name": unet, "weight_dtype": "fp8_e4m3fn"}},
+            "2": {"class_type": "DualCLIPLoader",
+                  "inputs": {"clip_name1": req.flux_clip1,
+                             "clip_name2": req.flux_clip2,
+                             "type": "flux"}},
+            "3": {"class_type": "VAELoader",
+                  "inputs": {"vae_name": req.flux_vae}},
+            "4": {"class_type": "CLIPTextEncode",
+                  "inputs": {"text": req.prompt, "clip": ["2", 0]}},
+            "5": {"class_type": "FluxGuidance",
+                  "inputs": {"conditioning": ["4", 0], "guidance": req.flux_guidance}},
+            "6": {"class_type": "EmptySD3LatentImage",
+                  "inputs": {"width": req.width, "height": req.height, "batch_size": 1}},
+            "7": {"class_type": "KSampler",
+                  "inputs": {"model": ["1", 0], "positive": ["5", 0], "negative": ["4", 0],
+                             "latent_image": ["6", 0], "seed": seed, "steps": req.steps,
+                             "cfg": 1.0, "sampler_name": "euler",
+                             "scheduler": "simple", "denoise": 1.0}},
+            "8": {"class_type": "VAEDecode",
+                  "inputs": {"samples": ["7", 0], "vae": ["3", 0]}},
+            "9": {"class_type": "SaveImage",
+                  "inputs": {"images": ["8", 0], "filename_prefix": "rpu"}},
+        }
 
-        # ── Build workflow ──────────────────────────────────────────────
-        seed = random.randint(0, 2**32 - 1)
+    elif req.workflow_type == "custom":
+        if not req.custom_workflow.strip():
+            raise HTTPException(400, "Custom workflow JSON cannot be empty.")
+        try:
+            workflow = _json.loads(req.custom_workflow)
+        except _json.JSONDecodeError as e:
+            raise HTTPException(400, f"Invalid workflow JSON: {e}")
+        # Substitute {{placeholders}} in all string values
+        subs = {
+            "prompt":          req.prompt,
+            "negative_prompt": req.negative_prompt,
+            "width":           req.width,
+            "height":          req.height,
+            "steps":           req.steps,
+            "cfg":             req.cfg,
+            "checkpoint":      req.checkpoint,
+            "seed":            seed,
+        }
+        workflow = _substitute_workflow(workflow, subs)
+
+    else:
+        # Standard SD / SDXL checkpoint workflow
+        async with __import__("httpx").AsyncClient(timeout=10.0) as client:
+            checkpoint = req.checkpoint
+            if not checkpoint:
+                try:
+                    r = await client.get(f"{base}/object_info/CheckpointLoaderSimple")
+                    r.raise_for_status()
+                    info = r.json()
+                    ckpts = info.get("CheckpointLoaderSimple", {}).get(
+                        "input", {}).get("required", {}).get("ckpt_name", [[]])[0]
+                    checkpoint = ckpts[0] if ckpts else ""
+                except Exception as e:
+                    raise HTTPException(502, f"Could not reach ComfyUI at {base}: {e}")
+            if not checkpoint:
+                raise HTTPException(400, "No checkpoint found in ComfyUI. Load a model first.")
+
         workflow = {
             "4": {"class_type": "CheckpointLoaderSimple",
                   "inputs": {"ckpt_name": checkpoint}},
@@ -1768,7 +1844,8 @@ async def api_comfyui_generate(req: ComfyUIGenerateRequest):
                   "inputs": {"images": ["8", 0], "filename_prefix": "rpu"}},
         }
 
-        # ── Queue prompt ────────────────────────────────────────────────
+    # ── Queue prompt (shared by all workflow types) ─────────────────────
+    async with __import__("httpx").AsyncClient(timeout=15.0) as client:
         try:
             r = await client.post(f"{base}/prompt", json={"prompt": workflow}, timeout=15.0)
             r.raise_for_status()
@@ -1776,31 +1853,31 @@ async def api_comfyui_generate(req: ComfyUIGenerateRequest):
         except Exception as e:
             raise HTTPException(502, f"ComfyUI queue error: {e}")
 
-        # ── Poll history ────────────────────────────────────────────────
-        async with __import__("httpx").AsyncClient(timeout=300.0) as poll_client:
-            for _ in range(180):     # up to ~3 min
-                await asyncio.sleep(1)
-                try:
-                    hr = await poll_client.get(f"{base}/history/{prompt_id}")
-                    history = hr.json()
-                    if prompt_id in history:
-                        outputs = history[prompt_id].get("outputs", {})
-                        for node_id, node_out in outputs.items():
-                            for img in node_out.get("images", []):
-                                filename = img["filename"]
-                                subfolder = img.get("subfolder", "")
-                                img_type  = img.get("type", "output")
-                                params = f"filename={filename}&type={img_type}"
-                                if subfolder:
-                                    params += f"&subfolder={subfolder}"
-                                img_r = await poll_client.get(f"{base}/view?{params}")
-                                img_r.raise_for_status()
-                                b64 = base64.b64encode(img_r.content).decode()
-                                ct = img_r.headers.get("content-type", "image/png")
-                                return {"data_url": f"data:{ct};base64,{b64}",
-                                        "filename": filename}
-                except Exception:
-                    pass
+    # ── Poll history ─────────────────────────────────────────────────────
+    async with __import__("httpx").AsyncClient(timeout=300.0) as poll_client:
+        for _ in range(180):     # up to ~3 min
+            await asyncio.sleep(1)
+            try:
+                hr = await poll_client.get(f"{base}/history/{prompt_id}")
+                history = hr.json()
+                if prompt_id in history:
+                    outputs = history[prompt_id].get("outputs", {})
+                    for node_id, node_out in outputs.items():
+                        for img in node_out.get("images", []):
+                            filename = img["filename"]
+                            subfolder = img.get("subfolder", "")
+                            img_type  = img.get("type", "output")
+                            params = f"filename={filename}&type={img_type}"
+                            if subfolder:
+                                params += f"&subfolder={subfolder}"
+                            img_r = await poll_client.get(f"{base}/view?{params}")
+                            img_r.raise_for_status()
+                            b64 = base64.b64encode(img_r.content).decode()
+                            ct = img_r.headers.get("content-type", "image/png")
+                            return {"data_url": f"data:{ct};base64,{b64}",
+                                    "filename": filename}
+            except Exception:
+                pass
 
     raise HTTPException(504, "ComfyUI did not finish generating within the timeout.")
 

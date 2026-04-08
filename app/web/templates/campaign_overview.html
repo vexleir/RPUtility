@@ -779,34 +779,69 @@
           <input type="text" id="imggen-style-tags" placeholder="e.g. oil painting, fantasy art, detailed, cinematic lighting">
         </div>
 
-        <div class="form-group">
-          <label>Negative Prompt</label>
+        <div id="imggen-neg-row" class="form-group">
+          <label>Negative Prompt <span id="imggen-neg-flux-note" class="muted" style="font-size:0.75rem"></span></label>
           <input type="text" id="imggen-negative" value="lowres, bad anatomy, blurry, watermark, text">
         </div>
 
         <details id="imggen-comfy-details" style="margin-bottom:12px">
           <summary style="cursor:pointer;font-size:0.85rem;color:var(--text-dim);user-select:none">⚙ ComfyUI Settings</summary>
           <div style="padding-top:10px">
+
+            <div class="form-group">
+              <label>Workflow Type</label>
+              <select id="imggen-workflow-type" onchange="onImgGenWorkflowChange()">
+                <option value="sd">Standard (SD 1.5 / SDXL)</option>
+                <option value="flux">Flux</option>
+                <option value="custom">Custom JSON Workflow</option>
+              </select>
+            </div>
+
             <div class="form-group">
               <label>ComfyUI URL</label>
               <input type="text" id="imggen-comfy-url" value="http://localhost:8188">
             </div>
+
             <div class="form-group">
-              <label>Checkpoint <span class="muted dim">(leave blank to auto-detect)</span></label>
+              <label id="imggen-checkpoint-label">Checkpoint <span class="muted dim">(leave blank to auto-detect)</span></label>
               <div style="display:flex;gap:6px">
                 <input type="text" id="imggen-checkpoint" placeholder="auto-detect" style="flex:1">
                 <button class="btn btn-sm" onclick="fetchImgGenCheckpoints()">List</button>
               </div>
               <div id="imggen-checkpoint-list" class="muted" style="font-size:0.8rem;margin-top:4px;line-height:1.8"></div>
             </div>
+
+            <!-- Flux-only fields -->
+            <div id="imggen-flux-fields" style="display:none;border-left:3px solid var(--accent,#7c6af7);padding-left:10px;margin-bottom:10px">
+              <p class="muted" style="font-size:0.8rem;margin:0 0 8px">Flux loads CLIP and VAE separately. Enter the filenames exactly as they appear in your ComfyUI models folder.</p>
+              <div class="wb-grid-2">
+                <div class="form-group"><label>T5-XXL (CLIP 1)</label><input type="text" id="imggen-flux-clip1" value="t5xxl_fp8_e4m3fn.safetensors" placeholder="t5xxl_fp8_e4m3fn.safetensors"></div>
+                <div class="form-group"><label>CLIP-L (CLIP 2)</label><input type="text" id="imggen-flux-clip2" value="clip_l.safetensors" placeholder="clip_l.safetensors"></div>
+              </div>
+              <div class="wb-grid-2">
+                <div class="form-group"><label>VAE</label><input type="text" id="imggen-flux-vae" value="ae.safetensors" placeholder="ae.safetensors"></div>
+                <div class="form-group"><label>Guidance</label><input type="number" id="imggen-flux-guidance" value="3.5" min="1" max="20" step="0.5"></div>
+              </div>
+            </div>
+
             <div class="wb-grid-2">
               <div class="form-group"><label>Width</label><input type="number" id="imggen-width" value="512" min="256" max="2048" step="64"></div>
               <div class="form-group"><label>Height</label><input type="number" id="imggen-height" value="768" min="256" max="2048" step="64"></div>
             </div>
-            <div class="wb-grid-2">
+            <div id="imggen-cfg-row" class="wb-grid-2">
               <div class="form-group"><label>Steps</label><input type="number" id="imggen-steps" value="20" min="1" max="100"></div>
-              <div class="form-group"><label>CFG Scale</label><input type="number" id="imggen-cfg" value="7" min="1" max="30" step="0.5"></div>
+              <div class="form-group"><label>CFG Scale <span id="imggen-flux-note" class="muted" style="display:none;font-size:0.75rem">(unused by Flux)</span></label><input type="number" id="imggen-cfg" value="7" min="1" max="30" step="0.5"></div>
             </div>
+
+            <!-- Custom JSON workflow -->
+            <div id="imggen-custom-fields" style="display:none">
+              <div class="form-group">
+                <label>Custom Workflow JSON <span class="muted dim">(ComfyUI API format)</span></label>
+                <textarea id="imggen-custom-workflow" rows="8" placeholder='Paste your ComfyUI API-format workflow JSON here.&#10;&#10;Use these placeholders anywhere in string values:&#10;  {{prompt}}  {{negative_prompt}}  {{checkpoint}}&#10;  {{width}}  {{height}}  {{steps}}  {{cfg}}  {{seed}}' style="width:100%;box-sizing:border-box;font-family:monospace;font-size:0.78rem"></textarea>
+                <p class="muted" style="font-size:0.78rem;margin:4px 0 0">Get this from ComfyUI → Settings → Enable Dev Mode → <strong>Save (API Format)</strong>. Replace literal prompt/step values with <code>{{prompt}}</code>, <code>{{steps}}</code>, etc. to make them dynamic.</p>
+              </div>
+            </div>
+
           </div>
         </details>
 

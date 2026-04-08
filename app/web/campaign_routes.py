@@ -930,9 +930,10 @@ def delete_chronicle_entry(campaign_id: str, entry_id: str):
     store.delete(entry_id)
 
 
-_COMPRESS_SYSTEM = """You are a narrative historian. You will receive several chronicle entries from a roleplay campaign.
-Merge them into a single, coherent summary that preserves all essential plot points, character developments, and consequences.
-Write in past tense. Be concise but complete. Return only the merged summary text — no preamble, no labels."""
+_COMPRESS_SYSTEM = """You are a narrative historian. Your sole task is to SUMMARIZE and COMPRESS chronicle entries — never continue or extend the story.
+You will receive several chronicle entries from a roleplay campaign. Merge them into a single, coherent summary that preserves all essential plot points, character developments, and consequences.
+Write in past tense. Be concise but complete. Stop as soon as the summary is complete.
+IMPORTANT: Do NOT add new story events, dialogue, or plot. Only compress what is already written. Return only the merged summary text — no preamble, no labels, no continuation."""
 
 
 @router.post("/{campaign_id}/chronicle/compress")
@@ -956,8 +957,10 @@ def compress_chronicle(campaign_id: str, req: UpdateChronicleRequest):
         raise HTTPException(400, "Could not find at least 2 valid entries for this campaign")
 
     entries_sorted = sorted(entries, key=lambda e: e.scene_range_start)
-    combined = "\n\n".join(
-        f"[Scene {e.scene_range_start}] {e.content}" for e in entries_sorted
+    combined = (
+        "Compress and merge the following chronicle entries into a single summary. "
+        "Do not continue the story — only summarize what is already written.\n\n"
+        + "\n\n".join(f"[Scene {e.scene_range_start}] {e.content}" for e in entries_sorted)
     )
 
     campaign = _campaigns().get(campaign_id)
@@ -971,7 +974,7 @@ def compress_chronicle(campaign_id: str, req: UpdateChronicleRequest):
                 {"role": "user", "content": combined},
             ],
             "stream": False,
-            "options": {"temperature": 0.4, "num_predict": 512, "num_ctx": 4096},
+            "options": {"temperature": 0.3, "num_predict": 400, "num_ctx": 4096},
         }
         resp = httpx.post(
             f"{config.ollama_base_url.rstrip('/')}/api/chat",
