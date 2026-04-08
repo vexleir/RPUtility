@@ -931,11 +931,12 @@ def delete_chronicle_entry(campaign_id: str, entry_id: str):
 
 
 @router.post("/{campaign_id}/chronicle/compress")
-def compress_chronicle(campaign_id: str, req: UpdateChronicleRequest):
+def compress_chronicle_preview(campaign_id: str, req: UpdateChronicleRequest):
     """
-    AI-assisted chronicle compression.
+    AI-assisted chronicle compression — PREVIEW ONLY.
     The client sends the IDs of entries to merge as a newline-separated list in req.content.
-    Returns { "summary": "..." } for the client to confirm before replacing.
+    Returns { "summary": "...", "ids": [...], "scene_range_start": N, "scene_range_end": N }
+    without modifying any data. The client must call /compress/apply to commit.
     """
     import httpx
 
@@ -954,30 +955,33 @@ def compress_chronicle(campaign_id: str, req: UpdateChronicleRequest):
         f"ENTRY {i+1}:\n{e.content}" for i, e in enumerate(entries_sorted)
     )
 
-    # Single user message — no system/user split that models can blur together.
-    # Assistant pre-fill forces the model to begin outputting a summary immediately
-    # rather than treating the entries as a story to continue.
-    user_msg = (
-        f"I have {len(entries_sorted)} chronicle entries from a roleplay campaign. "
-        "I need you to merge them into ONE compressed summary paragraph. "
-        "Your output must only summarize what already happened — do not add any new events, "
-        "dialogue, or story. Write in past tense. Output only the summary, nothing else.\n\n"
-        f"{entries_text}"
-    )
-    prefill = "Here is the compressed summary of the provided chronicle entries:\n\n"
-
     campaign = _campaigns().get(campaign_id)
     model = (campaign.model_name if campaign else None) or config.ollama_model
+    ctx_window = (campaign.gen_settings.context_window if campaign else None) or config.context_window
+
+    system_msg = (
+        "You are a chronicle keeper for a fantasy roleplay campaign. "
+        "Your only job is to merge the provided chronicle entries into a single, condensed summary. "
+        "Write strictly in past tense. Do not invent new events, characters, or details. "
+        "Only summarize what the entries explicitly state. Output the summary only — no preamble, "
+        "no commentary, no headers."
+    )
+    user_msg = (
+        f"Merge these {len(entries_sorted)} chronicle entries into ONE compressed summary. "
+        "Preserve all important events, character names, and outcomes. "
+        "Omit redundant detail. Output only the merged summary.\n\n"
+        f"{entries_text}"
+    )
 
     try:
         payload = {
             "model": model,
             "messages": [
+                {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_msg},
-                {"role": "assistant", "content": prefill},
             ],
             "stream": False,
-            "options": {"temperature": 0.3, "num_predict": 400, "num_ctx": 4096},
+            "options": {"temperature": 0.2, "num_predict": 600, "num_ctx": ctx_window},
         }
         resp = httpx.post(
             f"{config.ollama_base_url.rstrip('/')}/api/chat",
@@ -985,22 +989,51 @@ def compress_chronicle(campaign_id: str, req: UpdateChronicleRequest):
             timeout=180.0,
         )
         resp.raise_for_status()
-        raw = resp.json()["message"]["content"].strip()
-        # Strip the prefill if the model echoed it back
-        summary = raw.removeprefix(prefill.strip()).strip()
+        summary = resp.json()["message"]["content"].strip()
     except Exception as e:
         raise HTTPException(503, f"AI compression failed: {e}")
 
-    # Apply: replace all selected entries with one merged entry
+    return {
+        "summary": summary,
+        "ids": [e.id for e in entries_sorted],
+        "scene_range_start": entries_sorted[0].scene_range_start,
+        "scene_range_end": entries_sorted[-1].scene_range_end,
+    }
+
+
+class CompressApplyRequest(BaseModel):
+    ids: list[str]
+    summary: str
+
+
+@router.post("/{campaign_id}/chronicle/compress/apply", status_code=201)
+def compress_chronicle_apply(campaign_id: str, req: CompressApplyRequest):
+    """
+    Apply a reviewed chronicle compression — deletes the source entries and saves the merged one.
+    """
+    if not req.summary.strip():
+        raise HTTPException(400, "Summary cannot be empty")
+    if len(req.ids) < 2:
+        raise HTTPException(400, "Need at least 2 entry IDs to compress")
+
+    store = _chronicle()
+    entries = [store.get(eid) for eid in req.ids]
+    entries = [e for e in entries if e and e.campaign_id == campaign_id]
+    if not entries:
+        raise HTTPException(404, "No valid entries found for this campaign")
+
+    entries_sorted = sorted(entries, key=lambda e: e.scene_range_start)
     start = entries_sorted[0].scene_range_start
     end = entries_sorted[-1].scene_range_end
+
     for e in entries_sorted:
         store.delete(e.id)
+
     merged = ChronicleEntry(
         campaign_id=campaign_id,
         scene_range_start=start,
         scene_range_end=end,
-        content=summary,
+        content=req.summary,
         confirmed=True,
     )
     store.save(merged)

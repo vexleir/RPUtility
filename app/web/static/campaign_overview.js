@@ -639,7 +639,10 @@ async function deleteChronicleEntry(entryId) {
 
 // ── Chronicle compression ──────────────────────────────────────────────────────
 
+let _compressCheckedIds = [];
+
 function openCompressChronicle() {
+  compressShowSelect();
   const list = document.getElementById("compress-entry-list");
   list.innerHTML = "";
   _chronicle.forEach(e => {
@@ -659,28 +662,79 @@ function openCompressChronicle() {
   openModal("compress-modal");
 }
 
-async function runCompress() {
+function compressShowSelect() {
+  document.getElementById("compress-step-select").style.display = "";
+  document.getElementById("compress-step-preview").style.display = "none";
+  document.getElementById("compress-btn-merge").style.display = "";
+  document.getElementById("compress-btn-apply").style.display = "none";
+  document.getElementById("compress-btn-back").style.display = "none";
+  document.getElementById("compress-loading").style.display = "none";
+}
+
+function compressShowPreview(summary) {
+  document.getElementById("compress-preview-text").value = summary;
+  document.getElementById("compress-step-select").style.display = "none";
+  document.getElementById("compress-step-preview").style.display = "";
+  document.getElementById("compress-btn-merge").style.display = "none";
+  document.getElementById("compress-btn-apply").style.display = "";
+  document.getElementById("compress-btn-back").style.display = "";
+  document.getElementById("compress-loading").style.display = "none";
+}
+
+async function runCompressPreview() {
   const checked = [...document.querySelectorAll(".compress-chk:checked")].map(c => c.value);
   if (checked.length < 2) { showBanner("Select at least 2 entries to compress.", "warning"); return; }
+  _compressCheckedIds = checked;
 
   document.getElementById("compress-loading").style.display = "";
+  document.getElementById("compress-btn-merge").disabled = true;
   try {
     const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/chronicle/compress`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content: checked.join("\n") }),
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    compressShowPreview(data.summary);
+  } catch (e) { showBanner(`Preview failed: ${e.message}`, "error"); }
+  finally {
+    document.getElementById("compress-loading").style.display = "none";
+    document.getElementById("compress-btn-merge").disabled = false;
+  }
+}
+
+async function runCompressApply() {
+  const summary = document.getElementById("compress-preview-text").value.trim();
+  if (!summary) { showBanner("Summary cannot be empty.", "warning"); return; }
+
+  document.getElementById("compress-loading").style.display = "";
+  document.getElementById("compress-btn-apply").disabled = true;
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/chronicle/compress/apply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids: _compressCheckedIds, summary }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
     const merged = await res.json();
-    // Replace selected entries with the merged one in local state
-    _chronicle = _chronicle.filter(e => !checked.includes(e.id));
+    _chronicle = _chronicle.filter(e => !_compressCheckedIds.includes(e.id));
     _chronicle.push(merged);
     _chronicle.sort((a, b) => a.scene_range_start - b.scene_range_start);
     closeModal("compress-modal");
     renderChronicle();
     showBanner("Chronicle entries compressed.", "success");
-  } catch (e) { showBanner(`Compression failed: ${e.message}`, "error"); }
-  finally { document.getElementById("compress-loading").style.display = "none"; }
+  } catch (e) { showBanner(`Apply failed: ${e.message}`, "error"); }
+  finally {
+    document.getElementById("compress-loading").style.display = "none";
+    document.getElementById("compress-btn-apply").disabled = false;
+  }
 }
 
 // ── NPC list renderer ─────────────────────────────────────────────────────────

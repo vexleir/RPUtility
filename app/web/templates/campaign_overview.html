@@ -221,18 +221,28 @@
 
   <!-- Chronicle compress selector -->
   <div id="compress-modal" class="modal-backdrop hidden">
-    <div class="modal" style="max-width:560px">
+    <div class="modal" style="max-width:580px">
       <div class="modal-header">
         <span>Compress Chronicle Entries</span>
         <button class="modal-close" onclick="closeModal('compress-modal')">✕</button>
       </div>
       <div class="modal-body">
-        <p class="muted" style="margin-bottom:12px">Select two or more entries to merge with AI into a single summary.</p>
-        <div id="compress-entry-list"></div>
+        <!-- Step 1: selection -->
+        <div id="compress-step-select">
+          <p class="muted" style="margin-bottom:12px">Select two or more entries to merge with AI into a single summary.</p>
+          <div id="compress-entry-list"></div>
+        </div>
+        <!-- Step 2: preview / edit -->
+        <div id="compress-step-preview" style="display:none">
+          <p class="muted" style="margin-bottom:8px">Review and edit the compressed summary before applying. <strong>This will replace the selected entries.</strong></p>
+          <textarea id="compress-preview-text" rows="10" style="width:100%;box-sizing:border-box;font-size:0.9rem"></textarea>
+        </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-primary" onclick="runCompress()">✦ Merge with AI</button>
-        <span class="muted" id="compress-loading" style="display:none;margin-left:8px">Compressing…</span>
+        <button id="compress-btn-merge" class="btn btn-primary" onclick="runCompressPreview()">✦ Preview Merge</button>
+        <button id="compress-btn-apply" class="btn btn-primary" onclick="runCompressApply()" style="display:none">✓ Apply</button>
+        <button id="compress-btn-back" class="btn" onclick="compressShowSelect()" style="display:none">← Back</button>
+        <span class="muted" id="compress-loading" style="display:none;margin-left:8px">Generating…</span>
         <button class="btn" onclick="closeModal('compress-modal')">Cancel</button>
       </div>
     </div>
