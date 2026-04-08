@@ -930,12 +930,6 @@ def delete_chronicle_entry(campaign_id: str, entry_id: str):
     store.delete(entry_id)
 
 
-_COMPRESS_SYSTEM = """You are a narrative historian. Your sole task is to SUMMARIZE and COMPRESS chronicle entries — never continue or extend the story.
-You will receive several chronicle entries from a roleplay campaign. Merge them into a single, coherent summary that preserves all essential plot points, character developments, and consequences.
-Write in past tense. Be concise but complete. Stop as soon as the summary is complete.
-IMPORTANT: Do NOT add new story events, dialogue, or plot. Only compress what is already written. Return only the merged summary text — no preamble, no labels, no continuation."""
-
-
 @router.post("/{campaign_id}/chronicle/compress")
 def compress_chronicle(campaign_id: str, req: UpdateChronicleRequest):
     """
@@ -943,7 +937,6 @@ def compress_chronicle(campaign_id: str, req: UpdateChronicleRequest):
     The client sends the IDs of entries to merge as a newline-separated list in req.content.
     Returns { "summary": "..." } for the client to confirm before replacing.
     """
-    import json as _json
     import httpx
 
     entry_ids: list[str] = [line.strip() for line in req.content.splitlines() if line.strip()]
@@ -957,11 +950,21 @@ def compress_chronicle(campaign_id: str, req: UpdateChronicleRequest):
         raise HTTPException(400, "Could not find at least 2 valid entries for this campaign")
 
     entries_sorted = sorted(entries, key=lambda e: e.scene_range_start)
-    combined = (
-        "Compress and merge the following chronicle entries into a single summary. "
-        "Do not continue the story — only summarize what is already written.\n\n"
-        + "\n\n".join(f"[Scene {e.scene_range_start}] {e.content}" for e in entries_sorted)
+    entries_text = "\n\n".join(
+        f"ENTRY {i+1}:\n{e.content}" for i, e in enumerate(entries_sorted)
     )
+
+    # Single user message — no system/user split that models can blur together.
+    # Assistant pre-fill forces the model to begin outputting a summary immediately
+    # rather than treating the entries as a story to continue.
+    user_msg = (
+        f"I have {len(entries_sorted)} chronicle entries from a roleplay campaign. "
+        "I need you to merge them into ONE compressed summary paragraph. "
+        "Your output must only summarize what already happened — do not add any new events, "
+        "dialogue, or story. Write in past tense. Output only the summary, nothing else.\n\n"
+        f"{entries_text}"
+    )
+    prefill = "Here is the compressed summary of the provided chronicle entries:\n\n"
 
     campaign = _campaigns().get(campaign_id)
     model = (campaign.model_name if campaign else None) or config.ollama_model
@@ -970,8 +973,8 @@ def compress_chronicle(campaign_id: str, req: UpdateChronicleRequest):
         payload = {
             "model": model,
             "messages": [
-                {"role": "system", "content": _COMPRESS_SYSTEM},
-                {"role": "user", "content": combined},
+                {"role": "user", "content": user_msg},
+                {"role": "assistant", "content": prefill},
             ],
             "stream": False,
             "options": {"temperature": 0.3, "num_predict": 400, "num_ctx": 4096},
@@ -982,7 +985,9 @@ def compress_chronicle(campaign_id: str, req: UpdateChronicleRequest):
             timeout=180.0,
         )
         resp.raise_for_status()
-        summary = resp.json()["message"]["content"].strip()
+        raw = resp.json()["message"]["content"].strip()
+        # Strip the prefill if the model echoed it back
+        summary = raw.removeprefix(prefill.strip()).strip()
     except Exception as e:
         raise HTTPException(503, f"AI compression failed: {e}")
 
