@@ -1640,7 +1640,8 @@ def import_npc_from_card(campaign_id: str, req: ImportCardRequest):
         f"Analyse this card for contradictions with the campaign world and return the integration JSON."
     )
 
-    model = req.model_name or config.ollama_model
+    campaign = _campaigns().get(campaign_id)
+    model = req.model_name or (campaign.model_name if campaign else None) or config.ollama_model
     try:
         raw = _ollama_generate(
             config.ollama_base_url, model,
@@ -1716,7 +1717,8 @@ def generate_npc(campaign_id: str, req: GenerateNpcRequest):
         f"Generate the complete NPC JSON now."
     )
 
-    model = req.model_name or config.ollama_model
+    campaign = _campaigns().get(campaign_id)
+    model = req.model_name or (campaign.model_name if campaign else None) or config.ollama_model
     try:
         raw = _ollama_generate(
             config.ollama_base_url, model,

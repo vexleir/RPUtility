@@ -60,7 +60,14 @@
       "Read(//c/Users/devio/.claude/plans/**)",
       "Bash(ls \"c:/Antigravity Projects/RP Utility/app/web/static/\"*.css)",
       "Bash(python -m pytest tests/test_scene.py --tb=short -q)",
-      "Bash(python -m pytest tests/test_scene.py -x --tb=long -q)"
+      "Bash(python -m pytest tests/test_scene.py -x --tb=long -q)",
+      "Bash(curl -s http://localhost:11434/api/tags)",
+      "Bash(python -m json.tool)",
+      "Bash(python -c \"import json,sys; data=json.load\\(sys.stdin\\); [print\\(m['name']\\) for m in data['models']]\")",
+      "Bash(python -c \"from app.core.config import config; print\\('ollama_model:', config.ollama_model\\); print\\('provider:', config.provider\\)\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" -X POST http://localhost:11434/api/chat -H \"Content-Type: application/json\" -d \"{\\\\\"model\\\\\":\\\\\"HammerAI/mn-mag-mell-r1:latest\\\\\",\\\\\"messages\\\\\":[{\\\\\"role\\\\\":\\\\\"user\\\\\",\\\\\"content\\\\\":\\\\\"hi\\\\\"}],\\\\\"stream\\\\\":false,\\\\\"options\\\\\":{\\\\\"num_predict\\\\\":5}}\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" -X POST http://localhost:11434/api/chat -H \"Content-Type: application/json\" -d \"{\\\\\"model\\\\\":\\\\\"minimax-m2.7:cloud\\\\\",\\\\\"messages\\\\\":[{\\\\\"role\\\\\":\\\\\"user\\\\\",\\\\\"content\\\\\":\\\\\"hi\\\\\"}],\\\\\"stream\\\\\":false,\\\\\"options\\\\\":{\\\\\"num_predict\\\\\":5}}\")",
+      "Bash(curl -s -X POST http://localhost:11434/api/chat -H \"Content-Type: application/json\" -d \"{\\\\\"model\\\\\":\\\\\"hf.co/DavidAU/Fimbulvetr-11B-Ultra-Quality-plus-imatrix-GGUF:latest\\\\\",\\\\\"messages\\\\\":[{\\\\\"role\\\\\":\\\\\"user\\\\\",\\\\\"content\\\\\":\\\\\"hi\\\\\"}],\\\\\"stream\\\\\":false,\\\\\"options\\\\\":{\\\\\"num_predict\\\\\":5}}\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\devio\\.claude\\projects\\c--Antigravity-Projects-RP-Utility\\memory"

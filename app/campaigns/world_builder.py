@@ -56,6 +56,7 @@ def _ollama_generate(
     prompt: str,
     max_tokens: int = 4096,
     temperature: float = 0.8,
+    num_ctx: int = 16384,
 ) -> str:
     """Simple blocking call to Ollama /api/chat."""
     payload = {
@@ -68,10 +69,17 @@ def _ollama_generate(
         "options": {
             "temperature": temperature,
             "num_predict": max_tokens,
-            "num_ctx": 8192,
+            "num_ctx": num_ctx,
         },
     }
     r = httpx.post(f"{base_url.rstrip('/')}/api/chat", json=payload, timeout=180.0)
+    if r.status_code == 404:
+        body = r.text
+        raise RuntimeError(
+            f"Model '{model}' not found in Ollama. "
+            f"Check that it is pulled and the name is spelled correctly. "
+            f"(Ollama said: {body[:200]})"
+        )
     r.raise_for_status()
     return r.json()["message"]["content"].strip()
 
