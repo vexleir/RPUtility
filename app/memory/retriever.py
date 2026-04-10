@@ -212,13 +212,24 @@ def _score(
     score = bd.importance_score
 
     # 2. Entity / location relevance
+    # Use prefix-aware matching so "Lyra" in a memory's entity list scores a hit
+    # when "Lyra Ashveil" is in the active scene — and vice versa.
     if scene:
-        scene_entities = {e.lower() for e in scene.active_characters}
+        scene_entities_canonical = [e.lower() for e in scene.active_characters]
+        scene_entities = set(scene_entities_canonical)
         scene_entities.add(scene.location.lower())
         mem_entities = {e.lower() for e in memory.entities}
         if memory.location:
             mem_entities.add(memory.location.lower())
+        # Exact overlap
         overlap = scene_entities & mem_entities
+        # Prefix overlap: catch "lyra" matching "lyra ashveil" or vice versa
+        if not overlap:
+            for me in mem_entities:
+                for se in scene_entities_canonical:
+                    if se.startswith(me + " ") or me.startswith(se + " "):
+                        overlap.add(me)
+                        break
         bd.entity_score = w_entity * len(overlap)
         score += bd.entity_score
 

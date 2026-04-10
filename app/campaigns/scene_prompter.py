@@ -41,6 +41,92 @@ def _compress_chronicle(text: str) -> str:
     return _TURN_LABEL_RE.sub("- ", text).strip()
 
 
+def _select_chronicle_entries(sorted_entries: list, recent_text: str) -> list:
+    """
+    Select chronicle entries to inject when the total exceeds _CHRON_THRESHOLD.
+
+    Strategy (two modes):
+      1. Semantic (when Ollama embedding model is configured):
+         Always keep the first entry (world-setting anchor) and the last 2
+         (recency).  Fill remaining slots with the top-scoring entries by
+         cosine similarity to recent_text.  Falls back to heuristic on any error.
+      2. Heuristic fallback:
+         Keep first _CHRON_ANCHOR entries + last _CHRON_TAIL entries.
+    """
+    from app.memory.embedder import embed_text, cosine_similarity
+
+    anchor_count = _CHRON_ANCHOR
+    tail_count   = _CHRON_TAIL
+    total_budget = anchor_count + tail_count   # same total as heuristic
+
+    anchor = sorted_entries[:anchor_count]
+    tail   = sorted_entries[-2:]               # always keep last 2 for recency
+    anchor_ids = {e.id for e in anchor}
+    tail_ids   = {e.id for e in tail}
+    middle     = [e for e in sorted_entries if e.id not in anchor_ids and e.id not in tail_ids]
+
+    if not middle:
+        # Nothing to pick from — just return anchor + de-duped tail
+        seen: set = set()
+        result = []
+        for e in anchor + tail:
+            if e.id not in seen:
+                result.append(e)
+                seen.add(e.id)
+        return result
+
+    # Try semantic scoring if embedding model is configured
+    semantic_ok = False
+    if _global_config.embedding_model and _global_config.provider == "ollama" and recent_text.strip():
+        try:
+            query_vec = embed_text(
+                recent_text[:800],
+                _global_config.ollama_base_url,
+                _global_config.embedding_model,
+            )
+            if query_vec:
+                # Score each middle entry: embed its content and compute similarity
+                scored = []
+                for e in middle:
+                    entry_vec = embed_text(
+                        e.content[:600],
+                        _global_config.ollama_base_url,
+                        _global_config.embedding_model,
+                    )
+                    sim = cosine_similarity(query_vec, entry_vec) if entry_vec else 0.0
+                    scored.append((e, sim))
+                scored.sort(key=lambda x: x[1], reverse=True)
+
+                # Fill slots between anchor and tail
+                fill_slots = total_budget - anchor_count - len(tail)
+                fill_slots = max(0, fill_slots)
+                selected_middle = [e for e, _ in scored[:fill_slots]]
+                # Re-sort by scene number so chronological order is preserved
+                selected_middle.sort(key=lambda e: e.scene_range_start)
+                semantic_ok = True
+
+                seen_ids: set = set()
+                result_sem = []
+                for e in anchor + selected_middle + tail:
+                    if e.id not in seen_ids:
+                        result_sem.append(e)
+                        seen_ids.add(e.id)
+                return result_sem
+        except Exception:
+            pass  # fall through to heuristic
+
+    if not semantic_ok:
+        # Heuristic fallback: first _CHRON_ANCHOR + last _CHRON_TAIL
+        heuristic_tail = [e for e in sorted_entries[-tail_count:] if e.id not in anchor_ids]
+        seen_h: set = set()
+        result_h = []
+        for e in anchor + heuristic_tail:
+            if e.id not in seen_h:
+                result_h.append(e)
+                seen_h.add(e.id)
+        return result_h
+
+
 def _fact_is_active(fact, recent_text: str) -> bool:
     """
     Return True if this fact should be included in the current system prompt.
@@ -74,6 +160,8 @@ def build_scene_messages(
     scene,
     user_message: str,
     user_name: str = "Player",
+    campaign_memories: list = [],
+    character_profiles: list = [],
 ) -> list[dict]:
     """
     Return an Ollama-compatible messages list for one turn of scene play.
@@ -92,7 +180,9 @@ def build_scene_messages(
                            places, factions, npc_relationships, scene,
                            all_world_npcs=all_world_npcs,
                            allow_unselected_npcs=allow_unselected_npcs,
-                           recent_text=recent_text)
+                           recent_text=recent_text,
+                           campaign_memories=campaign_memories,
+                           character_profiles=character_profiles)
 
     messages: list[dict] = [{"role": "system", "content": system}]
 
@@ -150,6 +240,8 @@ def _build_system(
     all_world_npcs: list = [],
     allow_unselected_npcs: bool = False,
     recent_text: str = "",
+    campaign_memories: list = [],
+    character_profiles: list = [],
 ) -> str:
     parts: list[str] = []
 
@@ -224,18 +316,14 @@ def _build_system(
     if magic:
         parts.append(f"[MAGIC / TECHNOLOGY]\n{magic}")
 
-    # ── Chronicle (smart recap — anchor + recent tail, turn labels stripped) ──
+    # ── Chronicle (smart recap — anchor + semantic/recent tail) ─────────────
     confirmed = [e for e in chronicle if e.content]
     if confirmed:
         confirmed_sorted = sorted(confirmed, key=lambda x: x.scene_range_start)
         if len(confirmed_sorted) <= _CHRON_THRESHOLD:
             recap = confirmed_sorted
         else:
-            anchor = confirmed_sorted[:_CHRON_ANCHOR]
-            tail = confirmed_sorted[-_CHRON_TAIL:]
-            anchor_ids = {e.id for e in anchor}
-            tail = [e for e in tail if e.id not in anchor_ids]
-            recap = anchor + tail
+            recap = _select_chronicle_entries(confirmed_sorted, recent_text)
 
         chron_lines = ["[STORY SO FAR — events that have already occurred; treat as fixed history]"]
         if len(confirmed_sorted) > _CHRON_THRESHOLD:
@@ -250,6 +338,54 @@ def _build_system(
             chron_lines.append(f"[{label}]\n{_compress_chronicle(e.content)}")
         parts.append("\n".join(chron_lines))
 
+    # ── Campaign memories (extracted from past scenes) ────────────────────────
+    # Structured MemoryEntry objects retrieved from campaign_memories table.
+    # Injected between the chronicle and the PC block so character-specific facts
+    # from previous scenes are visible even when not in the chronicle window.
+    if campaign_memories:
+        from app.core.models import ImportanceLevel, CertaintyLevel
+
+        critical = [m for m in campaign_memories if m.importance == ImportanceLevel.CRITICAL]
+        episodic = [m for m in campaign_memories if m.importance != ImportanceLevel.CRITICAL]
+
+        if critical:
+            crit_lines = ["[CRITICAL STORY FACTS — must never be contradicted]"]
+            for m in critical:
+                crit_lines.append(f"  !! {m.title}: {m.content}")
+            parts.append("\n".join(crit_lines))
+
+        if episodic:
+            mem_lines = ["[STORY MEMORIES — established facts from previous scenes]"]
+            for m in episodic:
+                cert = ""
+                if m.certainty == CertaintyLevel.RUMOR:
+                    cert = " [RUMOR]"
+                elif m.certainty == CertaintyLevel.SUSPICION:
+                    cert = " [SUSPICION]"
+                elif m.certainty == CertaintyLevel.LIE:
+                    cert = " [LIE]"
+                entities_tag = f" ({', '.join(m.entities)})" if m.entities else ""
+                mem_lines.append(f"  • {m.title}{cert}{entities_tag}: {m.content}")
+            parts.append("\n".join(mem_lines))
+
+    # ── Character Memory Profiles ─────────────────────────────────────────────
+    # One profile block per character who has an established profile.
+    # These are always injected when that character is present — no scoring
+    # needed — ensuring consistent personality, secrets, and current state.
+    if character_profiles:
+        profile_lines = ["[CHARACTER PROFILES — accumulated history; treat as established fact]"]
+        for p in character_profiles:
+            profile_lines.append(f"\n{p.character_name}:")
+            if p.profile_summary:
+                profile_lines.append(f"  {p.profile_summary}")
+            if p.confirmed_traits:
+                profile_lines.append(f"  Established traits: {'; '.join(p.confirmed_traits)}")
+            if p.known_secrets:
+                profile_lines.append(f"  Secrets known to player: {'; '.join(p.known_secrets)}")
+            if p.last_known_state:
+                profile_lines.append(f"  Current state: {p.last_known_state}")
+        parts.append("\n".join(profile_lines))
+
     # ── Player character ──────────────────────────────────────────────────────
     if player_character and player_character.name:
         pc = player_character
@@ -260,8 +396,8 @@ def _build_system(
         if pc.wants:         pc_lines.append(f"Wants: {pc.wants}")
         if pc.fears:         pc_lines.append(f"Fears: {pc.fears}")
         if pc.dev_log:
-            recent = pc.dev_log[-3:]
-            pc_lines.append("Recent development:")
+            recent = pc.dev_log[-8:]
+            pc_lines.append("Character development:")
             for entry in recent:
                 label = f"Scene {entry.scene_number}: " if entry.scene_number else ""
                 pc_lines.append(f"  • {label}{entry.note}")

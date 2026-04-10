@@ -41,7 +41,18 @@ Rules:
 - Write in 2-4 sentences, present-tense narrative style
 - IMPORTANT: Each memory includes a "(characters: ...)" label. Only include a character name in "entities" if they appear in at least one source memory's character list. Do NOT invent or merge character names.
 - The summary content must accurately attribute events to the correct characters — do not conflate who did what.
-- Output ONLY a JSON object:
+
+MUST PRESERVE — never discard or paraphrase away:
+- Full names of every person involved (do not shorten "Lyra Ashveil" to "Lyra")
+- Any death, permanent injury, transformation, or status change
+- Specific numbers (amounts of gold, distances, counts of troops, days elapsed)
+- Explicit promises, oaths, debts, threats, or betrayals — and WHO made them to WHOM
+- Revealed secrets or confirmed lies — and who revealed them
+- Who did what to whom — do not merge the agent and target of an action
+- Any item given, stolen, or destroyed that has story significance
+- Causal reasons (e.g. "because Lord Harwick threatened her family" must survive if it appears)
+
+Output ONLY a JSON object:
 {
   "title": "Short descriptive title (max 10 words)",
   "content": "The consolidated summary text",

@@ -41,6 +41,151 @@ from app.campaigns.store import (
 )
 from app.campaigns.world_builder import WorldBuilder, _dict_to_world_build_result
 from app.campaigns.scene_prompter import build_scene_messages
+from app.memory.campaign_store import CampaignMemoryStore
+from app.memory.extractor import extract_memories
+from app.memory.contradiction import check_contradictions
+from app.memory.profile_store import CharacterProfileStore
+from app.memory.profile_updater import update_profiles_for_scene
+from app.core.models import SceneState as _SceneState
+
+
+# ── Thin provider adapter for campaign memory extraction ──────────────────────
+# extract_memories() requires a BaseProvider. This adapter wraps _ai_chat so
+# the campaign routes can reuse the same extraction pipeline without pulling in
+# the full engine.
+
+class _CampaignExtractionProvider:
+    """Minimal provider adapter that routes generate() calls through _ai_chat."""
+
+    def generate(
+        self,
+        prompt: str,
+        *,
+        system: str = "",
+        temperature: float = 0.2,
+        max_tokens: int = 1024,
+    ) -> str:
+        messages: list[dict] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        return _ai_chat(messages, temperature=temperature, max_tokens=max_tokens)
+
+
+def _campaign_memories() -> CampaignMemoryStore:
+    return CampaignMemoryStore(_db())
+
+def _profiles() -> CharacterProfileStore:
+    return CharacterProfileStore(_db())
+
+
+def _extract_scene_memories_background(
+    scene_id: str,
+    campaign_id: str,
+    npc_names: list[str],
+) -> None:
+    """
+    Background thread: run memory extraction over a confirmed scene's transcript
+    and store results in campaign_memories.
+
+    Called when a scene is confirmed (end of scene).  Non-fatal — any failure is
+    logged but does not affect the confirm response.
+    """
+    try:
+        scene = _scenes().get(scene_id)
+        if not scene or not scene.turns:
+            return
+
+        # Split turns into user and assistant halves for the extractor
+        user_parts: list[str] = []
+        asst_parts: list[str] = []
+        for t in scene.turns:
+            if t.role == "user":
+                user_parts.append(t.content)
+            else:
+                asst_parts.append(t.content)
+
+        if not asst_parts:
+            return
+
+        # Build a minimal SceneState for entity/location context
+        fake_scene = _SceneState(
+            session_id=campaign_id,
+            location=scene.location or "Unknown",
+            active_characters=npc_names,
+        )
+
+        provider = _CampaignExtractionProvider()
+        mem_store = _campaign_memories()
+        existing = mem_store.get_active(campaign_id)
+
+        new_memories = extract_memories(
+            provider=provider,
+            session_id=campaign_id,
+            user_message=" ".join(user_parts),
+            assistant_message=" ".join(asst_parts),
+            scene=fake_scene,
+            source_turn_ids=[scene.id],
+            source_turn_number=scene.scene_number,
+        )
+
+        if not new_memories:
+            return
+
+        # Contradiction check against existing campaign memories
+        kept, _ = check_contradictions(
+            new_memories,
+            existing,
+            session_id=campaign_id,
+            mode=config.contradiction_mode,
+        )
+
+        mem_store.save_many(kept)
+        log.debug(
+            "Scene %s: extracted %d memories for campaign %s",
+            scene_id, len(kept), campaign_id,
+        )
+    except Exception:
+        log.exception(
+            "Scene memory extraction failed for scene %s (non-fatal)", scene_id
+        )
+
+
+def _update_profiles_background(
+    scene_id: str,
+    campaign_id: str,
+    character_names: list[str],
+    scene_number: int,
+) -> None:
+    """
+    Background thread: update CharacterMemoryProfiles for all named characters
+    in a confirmed scene.  Non-fatal — any failure is logged and ignored.
+    """
+    try:
+        scene = _scenes().get(scene_id)
+        if not scene or not scene.turns:
+            return
+
+        # Build a readable transcript for the LLM
+        lines: list[str] = []
+        for t in scene.turns:
+            label = "Player" if t.role == "user" else "Narrator"
+            lines.append(f"{label}: {t.content}")
+        transcript = "\n\n".join(lines)
+
+        provider = _CampaignExtractionProvider()
+        update_profiles_for_scene(
+            provider=provider,
+            campaign_id=campaign_id,
+            scene_number=scene_number,
+            scene_transcript=transcript,
+            character_names=character_names,
+            db_path=_db(),
+        )
+    except Exception:
+        log.exception(
+            "Profile update failed for scene %s (non-fatal)", scene_id
+        )
 
 log = logging.getLogger("rp_utility")
 
@@ -529,6 +674,9 @@ def delete_campaign(campaign_id: str):
     deleted = _campaigns().delete(campaign_id)
     if not deleted:
         raise HTTPException(404, "Campaign not found")
+    # Clean up extracted memories and character profiles for this campaign
+    _campaign_memories().delete_campaign(campaign_id)
+    _profiles().delete_campaign(campaign_id)
 
 
 # ── Player Character ───────────────────────────────────────────────────────────
@@ -1003,6 +1151,17 @@ def scene_regenerate_stream(campaign_id: str, scene_id: str, req: SceneRegenerat
         npc_rels_list = _npc_relationships().get_for_npcs(campaign_id, scene.npc_ids)
     all_npcs_list = _npcs().get_all(campaign_id) if scene.allow_unselected_npcs else []
 
+    npc_names_in_scene = [n.name for n in npc_list]
+    if pc and pc.name:
+        npc_names_in_scene.append(pc.name)
+    campaign_mem_list = _campaign_memories().get_active_for_scene(
+        campaign_id,
+        npc_names=npc_names_in_scene,
+        location=scene.location,
+        max_results=config.max_retrieved_memories,
+    )
+    profile_list = _profiles().get_many(campaign_id, npc_names_in_scene)
+
     messages = build_scene_messages(
         campaign=campaign,
         player_character=pc,
@@ -1018,6 +1177,8 @@ def scene_regenerate_stream(campaign_id: str, scene_id: str, req: SceneRegenerat
         scene=scene,
         user_message=last_user_content,
         user_name="Player",
+        campaign_memories=campaign_mem_list,
+        character_profiles=profile_list,
     )
 
     model = campaign.model_name or config.ollama_model
@@ -1122,6 +1283,26 @@ def confirm_scene(campaign_id: str, scene_id: str, req: ConfirmSceneRequest):
     # Upsert chronicle entry — update existing if one exists for this scene number
     if summary:
         _upsert_chronicle(campaign_id, scene.scene_number, summary)
+
+    # Extract structured memories from the scene transcript in the background.
+    # This populates campaign_memories so future scenes can recall character-specific
+    # events without relying solely on the chronicle.
+    npc_names = [n.name for n in _npcs().get_many(scene.npc_ids)] if scene.npc_ids else []
+    pc = _pcs().get(campaign_id)
+    if pc and pc.name:
+        npc_names.append(pc.name)
+
+    threading.Thread(
+        target=_extract_scene_memories_background,
+        args=(scene.id, campaign_id, npc_names),
+        daemon=True,
+    ).start()
+
+    threading.Thread(
+        target=_update_profiles_background,
+        args=(scene.id, campaign_id, npc_names, scene.scene_number),
+        daemon=True,
+    ).start()
 
     return _scene_dict(scene)
 
@@ -2612,6 +2793,18 @@ def scene_chat_stream(campaign_id: str, scene_id: str, req: SceneChatRequest):
         npc_rels_list = _npc_relationships().get_for_npcs(campaign_id, scene.npc_ids)
     all_npcs_list = _npcs().get_all(campaign_id) if scene.allow_unselected_npcs else []
 
+    # Retrieve campaign memories and character profiles for this scene
+    npc_names_in_scene = [n.name for n in npc_list]
+    if pc and pc.name:
+        npc_names_in_scene.append(pc.name)
+    campaign_mem_list = _campaign_memories().get_active_for_scene(
+        campaign_id,
+        npc_names=npc_names_in_scene,
+        location=scene.location,
+        max_results=config.max_retrieved_memories,
+    )
+    profile_list = _profiles().get_many(campaign_id, npc_names_in_scene)
+
     messages = build_scene_messages(
         campaign=campaign,
         player_character=pc,
@@ -2627,6 +2820,8 @@ def scene_chat_stream(campaign_id: str, scene_id: str, req: SceneChatRequest):
         scene=scene,
         user_message=req.message,
         user_name=req.user_name,
+        campaign_memories=campaign_mem_list,
+        character_profiles=profile_list,
     )
 
     model = campaign.model_name or config.ollama_model

@@ -7,7 +7,13 @@ Detection strategy (lightweight, no embeddings required):
      same entities and are of the same type, they may contradict each other.
   2. Keyword opposition: scan for opposing signal words (alive/dead, open/closed,
      present/gone, etc.) in the content of overlapping memories.
-  3. Confidence asymmetry: new rumor vs existing confirmed fact is always flagged.
+  3. Numeric drift: detect when both memories state a specific number for the
+     same entity (e.g. "3 gold" vs "50 gold") — significantly different values flag.
+  4. Temporal contradiction: detect past-tense vs future-tense claims about the
+     same event (e.g. "the festival was held" vs "the festival will happen tomorrow").
+  5. Relationship flip: detect strongly opposing relationship terms
+     (e.g. "close friends" vs "bitter enemies") for shared entities.
+  6. Confidence asymmetry: new rumor vs existing confirmed critical fact.
 
 Resolution modes (configured via config.contradiction_mode):
   - "mark_uncertain": lower confidence of new memory to 0.4, set certainty=suspicion
@@ -156,6 +162,23 @@ def _find_contradiction(
                 )
                 return True, existing, desc
 
+        # Numeric drift: conflicting specific numbers for the same subject
+        num_hit, num_desc = _check_numeric_drift(
+            new_words, ex_words, new_mem.content, existing.content
+        )
+        if num_hit:
+            return True, existing, num_desc
+
+        # Temporal conflict: one claims event already happened, other says future
+        temp_hit, temp_desc = _check_temporal_conflict(new_words, ex_words)
+        if temp_hit:
+            return True, existing, temp_desc
+
+        # Relationship flip: friend/enemy polarity reversal for shared entities
+        rel_hit, rel_desc = _check_relationship_flip(new_words, ex_words)
+        if rel_hit:
+            return True, existing, rel_desc
+
         # Confidence asymmetry: new rumor contradicting confirmed critical fact
         if (
             new_mem.certainty in (CertaintyLevel.RUMOR, CertaintyLevel.SUSPICION)
@@ -179,3 +202,115 @@ def _words(text: str) -> list[str]:
     """Lowercase word tokens, stripping punctuation."""
     import re
     return re.findall(r"[a-z]+", text.lower())
+
+
+# ── Additional detection helpers ──────────────────────────────────────────────
+
+import re as _re
+
+# Relationship terms split into opposing polarity groups
+_REL_POSITIVE = frozenset([
+    "friend", "friends", "ally", "allies", "allied", "companion", "companions",
+    "trusted", "trusts", "close", "devoted", "loyal", "love", "loves", "partner",
+])
+_REL_NEGATIVE = frozenset([
+    "enemy", "enemies", "foe", "foes", "rival", "rivals", "hostile", "hostility",
+    "betrayed", "betrayer", "traitor", "traitors", "hates", "hate", "despises",
+    "despise", "bitter",
+])
+
+# Temporal markers that suggest past vs future tense for the same event
+_PAST_MARKERS = frozenset([
+    "was", "were", "had", "happened", "occurred", "took", "held", "ended",
+    "died", "fell", "arrived", "left", "finished", "completed", "destroyed",
+])
+_FUTURE_MARKERS = frozenset([
+    "will", "shall", "going", "upcoming", "tomorrow", "soon", "planned",
+    "scheduled", "expected", "about", "intends", "plans",
+])
+
+
+def _extract_numbers(text: str) -> list[float]:
+    """Return all numeric values found in text."""
+    return [float(m) for m in _re.findall(r"\b\d+(?:\.\d+)?\b", text)]
+
+
+def _check_numeric_drift(
+    new_words: set[str],
+    ex_words: set[str],
+    new_content: str,
+    ex_content: str,
+) -> tuple[bool, str]:
+    """
+    Flag when both texts contain a specific number and those numbers differ
+    significantly (>50% relative difference) for the same apparent subject.
+    Only triggers when both texts share at least 2 non-trivial content words
+    (reduces false positives on unrelated numeric mentions).
+    """
+    new_nums = _extract_numbers(new_content)
+    ex_nums  = _extract_numbers(ex_content)
+    if not new_nums or not ex_nums:
+        return False, ""
+
+    # Require meaningful word overlap beyond just entity names
+    content_words = new_words & ex_words - {"the", "a", "an", "and", "or", "of", "to", "in"}
+    if len(content_words) < 2:
+        return False, ""
+
+    for n in new_nums:
+        for e in ex_nums:
+            if n == e:
+                continue
+            denom = max(abs(n), abs(e), 1)
+            if abs(n - e) / denom > 0.5:
+                return True, (
+                    f"Numeric conflict: new memory says {n} but existing says {e} "
+                    f"(shared context: {', '.join(list(content_words)[:4])})"
+                )
+    return False, ""
+
+
+def _check_temporal_conflict(
+    new_words: set[str],
+    ex_words: set[str],
+) -> tuple[bool, str]:
+    """
+    Flag when one memory uses past-tense markers and the other uses future-tense
+    markers, suggesting they make opposing claims about whether an event has
+    already happened.  Requires at least 3 shared content words to reduce noise.
+    """
+    new_past   = bool(new_words & _PAST_MARKERS)
+    new_future = bool(new_words & _FUTURE_MARKERS)
+    ex_past    = bool(ex_words  & _PAST_MARKERS)
+    ex_future  = bool(ex_words  & _FUTURE_MARKERS)
+
+    if (new_past and ex_future) or (new_future and ex_past):
+        shared_content = (new_words & ex_words) - _PAST_MARKERS - _FUTURE_MARKERS
+        if len(shared_content) >= 3:
+            return True, (
+                "Temporal conflict: one memory describes this event as past, "
+                f"the other as future (shared terms: {', '.join(list(shared_content)[:5])})"
+            )
+    return False, ""
+
+
+def _check_relationship_flip(
+    new_words: set[str],
+    ex_words: set[str],
+) -> tuple[bool, str]:
+    """
+    Flag when new memory uses strongly positive relationship terms and existing
+    memory uses strongly negative ones (or vice versa) for the same entities.
+    """
+    new_pos = bool(new_words & _REL_POSITIVE)
+    new_neg = bool(new_words & _REL_NEGATIVE)
+    ex_pos  = bool(ex_words  & _REL_POSITIVE)
+    ex_neg  = bool(ex_words  & _REL_NEGATIVE)
+
+    if (new_pos and ex_neg) or (new_neg and ex_pos):
+        new_term = next(iter(new_words & (_REL_POSITIVE if new_pos else _REL_NEGATIVE)), "?")
+        ex_term  = next(iter(ex_words  & (_REL_NEGATIVE if new_pos else _REL_POSITIVE)), "?")
+        return True, (
+            f"Relationship conflict: new memory says '{new_term}' but existing says '{ex_term}'"
+        )
+    return False, ""

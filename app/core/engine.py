@@ -129,6 +129,11 @@ class RoleplayEngine:
         # from the same session racing to write memories/relationships/scene state.
         self._extraction_locks: dict[str, threading.Lock] = {}
 
+        # Per-session rolling cache of memory IDs retrieved on the PREVIOUS turn.
+        # Used to apply a mild same-turn repetition penalty without permanently
+        # downgrading memories that were ever referenced.  Keyed by session_id.
+        self._prev_turn_memory_ids: dict[str, set[str]] = {}
+
         self._reload_assets()
 
     def _reload_assets(self) -> None:
@@ -239,10 +244,10 @@ class RoleplayEngine:
         # Active memories (excludes archived)
         all_memories = self.memory_store.get_active(session_id)
 
-        # Recently-used IDs for repetition reduction
-        recently_used = {
-            m.id for m in all_memories if m.last_referenced_at is not None
-        }
+        # Recently-used IDs for repetition reduction — only the PREVIOUS turn's
+        # retrieved set, not all-time referenced memories (which caused a permanent
+        # one-way penalty ratchet on any memory ever surfaced).
+        recently_used = self._prev_turn_memory_ids.get(session_id, set())
 
         # Compute query embedding for semantic retrieval (R2.1)
         # Only fires when an embedding model is configured — no-op otherwise
@@ -425,6 +430,12 @@ class RoleplayEngine:
         for mem in ctx["relevant_memories"]:
             self.memory_store.mark_referenced(mem.id)
 
+        # Update rolling cache so the NEXT turn can apply the repetition penalty
+        # only against memories shown this turn (not all-time referenced).
+        self._prev_turn_memory_ids[session_id] = {
+            m.id for m in ctx["relevant_memories"]
+        }
+
         if self.config.memory_extraction_enabled:
             self._run_background_extraction(
                 session_id=session_id,
@@ -534,6 +545,12 @@ class RoleplayEngine:
 
         for mem in ctx["relevant_memories"]:
             self.memory_store.mark_referenced(mem.id)
+
+        # Update rolling cache so the NEXT turn can apply the repetition penalty
+        # only against memories shown this turn (not all-time referenced).
+        self._prev_turn_memory_ids[session_id] = {
+            m.id for m in ctx["relevant_memories"]
+        }
 
         if self.config.memory_extraction_enabled:
             self._run_background_extraction(

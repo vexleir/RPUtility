@@ -193,6 +193,36 @@ def _parse_json_response(raw: str) -> list[dict]:
     return []
 
 
+def _normalize_entity(name: str, canonical_names: list[str]) -> str:
+    """
+    Map a short or variant entity name to its canonical form.
+
+    Rules (in order):
+      1. Exact match (case-insensitive) → return canonical
+      2. Canonical name starts with the given name + space → return canonical
+         (e.g. "Lyra" → "Lyra Ashveil")
+      3. Given name starts with any canonical first word → return canonical
+         (e.g. "Lyra A." → "Lyra Ashveil")
+      4. No match → return name unchanged (will be filtered by allowlist)
+    """
+    nl = name.strip().lower()
+    if not nl:
+        return name
+    for cn in canonical_names:
+        cnl = cn.lower()
+        if nl == cnl:
+            return cn
+        # Short first-name match: "lyra" matches "lyra ashveil"
+        if cnl.startswith(nl + " "):
+            return cn
+        # Prefix of canonical first token: "lyra a" or "lyra as" matches "lyra ashveil"
+        cn_first = cnl.split()[0] if cnl.split() else cnl
+        nl_first = nl.split()[0] if nl.split() else nl
+        if nl_first == cn_first and len(nl) >= 3:
+            return cn
+    return name
+
+
 def _build_entries(
     items: list[dict],
     session_id: str,
@@ -228,8 +258,13 @@ def _build_entries(
             if certainty == CertaintyLevel.LIE:
                 confidence = min(confidence, 0.2)
 
-            # Strip entity names the LLM hallucinated outside the active character list
+            # Normalize entity names to canonical forms before allowlist filtering.
+            # This handles cases where the LLM outputs "Lyra" instead of "Lyra Ashveil".
             raw_entities = [str(e) for e in item.get("entities", [])]
+            if active_characters:
+                raw_entities = [_normalize_entity(e, active_characters) for e in raw_entities]
+
+            # Strip entity names the LLM hallucinated outside the active character list
             if allowed_lower:
                 raw_entities = [e for e in raw_entities if e.lower() in allowed_lower]
 

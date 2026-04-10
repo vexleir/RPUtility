@@ -472,6 +472,60 @@ def _migrate(conn: sqlite3.Connection) -> None:
     except Exception:
         pass  # column already exists
 
+    # Memory Intelligence — campaign_memories: structured MemoryEntry objects extracted
+    # from scene transcripts at scene end.  Scoped by campaign_id (stored in session_id col).
+    # Same schema as the session `memories` table so CampaignMemoryStore can reuse the
+    # same row-to-model helper.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS campaign_memories (
+            id                  TEXT PRIMARY KEY,
+            session_id          TEXT NOT NULL,
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL,
+            type                TEXT NOT NULL,
+            title               TEXT NOT NULL,
+            content             TEXT NOT NULL,
+            entities            TEXT NOT NULL DEFAULT '[]',
+            location            TEXT,
+            tags                TEXT NOT NULL DEFAULT '[]',
+            importance          TEXT NOT NULL DEFAULT 'medium',
+            last_referenced_at  TEXT,
+            source_turn_ids     TEXT NOT NULL DEFAULT '[]',
+            source_turn_number  INTEGER NOT NULL DEFAULT 0,
+            confidence          REAL NOT NULL DEFAULT 1.0,
+            certainty           TEXT NOT NULL DEFAULT 'confirmed',
+            consolidated_from   TEXT NOT NULL DEFAULT '[]',
+            contradiction_of    TEXT,
+            archived            INTEGER NOT NULL DEFAULT 0,
+            embedding           BLOB
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_campaign_memories_session ON campaign_memories(session_id)"
+    )
+
+    # Character Memory Profiles — one row per character per campaign.
+    # Maintained by the profile updater after each scene confirmation.
+    # Injected into the scene prompt whenever that character is active.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS character_profiles (
+            id                  TEXT PRIMARY KEY,
+            campaign_id         TEXT NOT NULL,
+            character_name      TEXT NOT NULL,
+            confirmed_traits    TEXT NOT NULL DEFAULT '[]',
+            known_secrets       TEXT NOT NULL DEFAULT '[]',
+            last_known_state    TEXT NOT NULL DEFAULT '',
+            profile_summary     TEXT NOT NULL DEFAULT '',
+            source_scene_numbers TEXT NOT NULL DEFAULT '[]',
+            updated_at          TEXT NOT NULL,
+            UNIQUE(campaign_id, character_name)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_character_profiles_campaign "
+        "ON character_profiles(campaign_id)"
+    )
+
     # NPC forms, transformation history, and player relationship history
     for _col in [
         "history_with_player TEXT NOT NULL DEFAULT ''",
