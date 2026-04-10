@@ -42,10 +42,19 @@ const MAX_DOM_MESSAGES = 60;
 let _totalTurnCount = 0;      // total turns fetched from server (for "load earlier" label)
 let _loadedOffset = 0;        // how many earlier turns have been loaded via "load earlier"
 
+// ── Stream abort controller (R4.4) ───────────────────────────────────────────
+let _streamAbort = null;
+
 // ── Boot ──────────────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", async () => {
-  await loadSession();
-  await loadBookmarkedIds();
+  // R4.3 — parallel page-load fetches: session + bookmarks don't depend on each other
+  const [sessionData, bookmarkData] = await Promise.all([
+    fetchJSON(`/api/session/${SESSION_ID}`).catch(() => null),
+    fetchJSON(`/api/session/${SESSION_ID}/bookmarks`).catch(() => []),
+  ]);
+  applySession(sessionData);
+  applyBookmarkIds((bookmarkData || []).map(b => b.turn_id));
+
   await loadHistory();
   setupInput();
   setupSearch();
@@ -58,33 +67,31 @@ document.addEventListener("DOMContentLoaded", async () => {
   scrollToBottom();
 });
 
-// ── Load session info ─────────────────────────────────────────────────────────
-async function loadSession() {
-  try {
-    const res = await fetch(`/api/session/${SESSION_ID}`);
-    if (!res.ok) throw new Error("Session not found");
-    session = await res.json();
+// R4.4 — abort active stream on navigation to prevent orphaned DB writes
+window.addEventListener("beforeunload", () => _streamAbort?.abort());
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) _streamAbort?.abort();
+});
 
-    // Header
-    $("#session-title").textContent = session.name;
-    $("#char-name").textContent = session.character_name;
-    $("#model-badge").textContent = session.model_name || "default model";
-    if (session.scene?.location) {
-      $("#location-badge").textContent = "📍 " + session.scene.location;
-    }
+// ── Apply pre-fetched session data (R4.3: called with parallel-loaded data) ──
+function applySession(data) {
+  if (!data) { showError("Could not load session."); return; }
+  session = data;
 
-    // Try to load the character's card image (PNG cards carry one)
-    if (session.character_name) {
-      try {
-        const imgRes = await fetch(`/api/cards/${encodeURIComponent(session.character_name)}/image`);
-        if (imgRes.ok) {
-          const blob = await imgRes.blob();
-          _charAvatarUrl = URL.createObjectURL(blob);
-        }
-      } catch { /* no image — use letter fallback */ }
-    }
-  } catch (err) {
-    showError("Could not load session: " + err.message);
+  // Header
+  $("#session-title").textContent = session.name;
+  $("#char-name").textContent = session.character_name;
+  $("#model-badge").textContent = session.model_name || "default model";
+  if (session.scene?.location) {
+    $("#location-badge").textContent = "📍 " + session.scene.location;
+  }
+
+  // Try to load the character's card image (PNG cards carry one)
+  if (session.character_name) {
+    fetch(`/api/cards/${encodeURIComponent(session.character_name)}/image`)
+      .then(r => r.ok ? r.blob() : Promise.reject())
+      .then(blob => { _charAvatarUrl = URL.createObjectURL(blob); })
+      .catch(() => { /* no image — use letter fallback */ });
   }
 }
 
@@ -92,9 +99,7 @@ async function loadSession() {
 async function loadHistory() {
   try {
     // Fetch only the most recent MAX_DOM_MESSAGES turns for initial render.
-    // The server endpoint already returns newest-last within the limit.
-    const res = await fetch(`/api/session/${SESSION_ID}/turns?limit=${MAX_DOM_MESSAGES}`);
-    const turns = await res.json();
+    const turns = await fetchJSON(`/api/session/${SESSION_ID}/turns?limit=${MAX_DOM_MESSAGES}`);
     _allTurns = turns.map(t => ({ id: t.id, role: t.role }));
     _totalTurnCount = session?.turn_count ?? turns.length;
 
@@ -234,11 +239,13 @@ async function sendMessage() {
   showTyping(true);
   scrollToBottom();
 
+  _streamAbort = new AbortController();
   try {
     const res = await fetch(`/api/session/${SESSION_ID}/chat/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: text, user_name: _getPersona().name || "Player", ..._getGenParams() }),
+      signal: _streamAbort.signal,
     });
 
     if (!res.ok) {
@@ -313,9 +320,12 @@ async function sendMessage() {
 
   } catch (err) {
     showTyping(false);
-    console.error("Chat error:", err);
-    showError(err.message);
+    if (err.name !== "AbortError") {
+      console.error("Chat error:", err);
+      showError(err.message);
+    }
   } finally {
+    _streamAbort = null;
     isGenerating = false;
     setInputEnabled(true);
     stopElapsedTimer();
@@ -992,12 +1002,9 @@ async function reloadTurnsQuietly() {
 }
 
 // ── Bookmarks ─────────────────────────────────────────────────────────────────
-async function loadBookmarkedIds() {
-  try {
-    const res = await fetch(`/api/session/${SESSION_ID}/bookmarks`);
-    const bookmarks = await res.json();
-    _bookmarkedTurnIds = new Set(bookmarks.map(b => b.turn_id));
-  } catch {}
+// Apply pre-fetched bookmark IDs (R4.3: called with parallel-loaded data)
+function applyBookmarkIds(ids) {
+  _bookmarkedTurnIds = new Set(Array.isArray(ids) ? ids : []);
 }
 
 async function toggleBookmark(turnId, btn) {

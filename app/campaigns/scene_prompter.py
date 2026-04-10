@@ -11,6 +11,9 @@ from __future__ import annotations
 import re as _re
 from collections import defaultdict
 
+from app.prompting.budget import apply_context_budget
+from app.core.config import config as _global_config
+
 # Maximum chronicle entries sent to AI. When the total exceeds this, we keep
 # the first CHRON_ANCHOR entries (world-setting context) and the last
 # CHRON_TAIL entries (recent events). Everything in between is omitted to
@@ -93,6 +96,16 @@ def build_scene_messages(
 
     messages: list[dict] = [{"role": "system", "content": system}]
 
+    # ── Scene working memory (R2.5) ──────────────────────────────────────────
+    # If the scene has an extracted event log, inject it right after the system
+    # prompt so key earlier events remain visible even when turn history is trimmed.
+    if scene and scene.scene_event_log:
+        event_text = "\n".join(f"• {e}" for e in scene.scene_event_log)
+        messages.append({
+            "role": "system",
+            "content": f"[EARLIER IN THIS SCENE — key events so far]\n{event_text}",
+        })
+
     # ── Rolling scene summary ────────────────────────────────────────────────
     # If the scene has accumulated many turns, keep only the most recent
     # _SCENE_TURNS_KEEP verbatim and add a brief header for the rest.
@@ -119,7 +132,7 @@ def build_scene_messages(
     else:
         messages.append({"role": "user", "content": user_message})
 
-    return messages
+    return apply_context_budget(messages, _global_config.context_window)
 
 
 def _build_system(

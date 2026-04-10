@@ -29,6 +29,7 @@ from datetime import datetime, UTC
 from typing import Optional
 
 from app.core.models import MemoryEntry, ImportanceLevel, SceneState, CertaintyLevel
+from app.memory.embedder import cosine_similarity
 
 log = logging.getLogger("rp_utility")
 
@@ -51,14 +52,14 @@ _CERTAINTY_MULT = {
 
 # Per-type default caps (0 = no cap) — overridden from Config at call time
 _DEFAULT_TYPE_CAPS: dict[str, int] = {
-    "event": 6,
-    "world_fact": 5,
-    "character_detail": 5,
-    "relationship_change": 4,
-    "world_state": 4,
-    "rumor": 2,
-    "suspicion": 2,
-    "consolidation": 4,
+    "event": 8,
+    "world_fact": 6,
+    "character_detail": 6,
+    "relationship_change": 5,
+    "world_state": 5,
+    "rumor": 3,
+    "suspicion": 3,
+    "consolidation": 5,
 }
 
 
@@ -72,6 +73,7 @@ class ScoreBreakdown:
     keyword_score: float = 0.0
     recency_score: float = 0.0
     reference_score: float = 0.0
+    semantic_score: float = 0.0
     confidence_mult: float = 1.0
     certainty_mult: float = 1.0
     total: float = 0.0
@@ -90,8 +92,14 @@ def retrieve(
     weight_keyword: float = 0.5,
     weight_recency: float = 1.0,
     weight_reference: float = 0.5,
+    weight_semantic: float = 1.5,
     recency_half_life: float = 30.0,
     reference_half_life: float = 7.0,
+    # Turn-based recency (R2.2) — decay by story turns rather than wall-clock days
+    current_turn_number: int = 0,
+    turn_half_life: float = 40.0,
+    # Semantic query embedding (R2.1) — None disables semantic scoring
+    query_embedding: Optional[list[float]] = None,
     # Per-type caps (None = use defaults)
     type_caps: Optional[dict[str, int]] = None,
     # Recent memory IDs — apply mild penalty to reduce repetition
@@ -124,6 +132,10 @@ def retrieve(
             weight_importance, weight_entity, weight_keyword,
             weight_recency, weight_reference, recency_half_life, reference_half_life,
             bd,
+            current_turn_number=current_turn_number,
+            turn_half_life=turn_half_life,
+            query_embedding=query_embedding,
+            weight_semantic=weight_semantic,
         )
         bd.total = score
         scored.append((m, score, bd))
@@ -189,6 +201,10 @@ def _score(
     recency_half_life: float,
     reference_half_life: float,
     bd: ScoreBreakdown,
+    current_turn_number: int = 0,
+    turn_half_life: float = 40.0,
+    query_embedding: Optional[list[float]] = None,
+    weight_semantic: float = 1.5,
 ) -> float:
     # 1. Importance base
     imp_base = _IMPORTANCE_SCORE.get(memory.importance, 1.0)
@@ -214,9 +230,15 @@ def _score(
         bd.keyword_score = w_keyword * hits
         score += bd.keyword_score
 
-    # 4. Recency decay
+    # 4. Recency decay — blend turn-based (primary) with wall-clock (secondary)
     days_old = _days_since(memory.created_at)
-    recency = math.exp(-days_old / max(recency_half_life, 1.0))
+    time_decay = math.exp(-days_old / max(recency_half_life, 1.0))
+    if current_turn_number > 0:
+        turn_gap = max(0, current_turn_number - memory.source_turn_number)
+        turn_decay = math.exp(-turn_gap / max(turn_half_life, 1.0))
+        recency = 0.6 * turn_decay + 0.4 * time_decay
+    else:
+        recency = time_decay
     bd.recency_score = w_recency * recency
     score += bd.recency_score
 
@@ -227,15 +249,21 @@ def _score(
         bd.reference_score = w_reference * ref_boost
         score += bd.reference_score
 
-    # 6. Confidence multiplier
+    # 6. Semantic similarity (R2.1) — only when both sides have embeddings
+    if query_embedding and memory.embedding:
+        sim = cosine_similarity(query_embedding, memory.embedding)
+        bd.semantic_score = weight_semantic * sim
+        score += bd.semantic_score
+
+    # 7. Confidence multiplier
     bd.confidence_mult = max(0.0, min(1.0, memory.confidence))
     score *= bd.confidence_mult
 
-    # 7. Certainty multiplier
+    # 8. Certainty multiplier
     bd.certainty_mult = _CERTAINTY_MULT.get(memory.certainty, 1.0)
     score *= bd.certainty_mult
 
-    # 8. Recently-used mild penalty (reduce repetition)
+    # 9. Recently-used mild penalty (reduce repetition)
     if memory.id in recently_used:
         score *= 0.7
 
@@ -256,10 +284,10 @@ def _log_breakdown(breakdowns: list[ScoreBreakdown], selected: list[MemoryEntry]
     for bd in sorted(breakdowns, key=lambda b: b.total, reverse=True):
         status = "✓ SELECTED" if bd.memory_id in selected_ids else f"✗ rejected ({bd.rejection_reason or 'score'})"
         log.debug(
-            "  [%s] '%s' total=%.2f imp=%.2f ent=%.2f kw=%.2f rec=%.2f ref=%.2f conf=%.2f cert=%.2f",
+            "  [%s] '%s' total=%.2f imp=%.2f ent=%.2f kw=%.2f rec=%.2f ref=%.2f sem=%.2f conf=%.2f cert=%.2f",
             status, bd.title, bd.total,
             bd.importance_score, bd.entity_score, bd.keyword_score,
-            bd.recency_score, bd.reference_score,
+            bd.recency_score, bd.reference_score, bd.semantic_score,
             bd.confidence_mult, bd.certainty_mult,
         )
     log.debug("=== End retrieval breakdown ===")

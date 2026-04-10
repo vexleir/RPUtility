@@ -94,6 +94,12 @@ async function loadWorld() {
     // Populate NPC checkboxes
     renderNpcCheckboxes();
 
+    // R5.4 — auto-suggest NPCs when location field is filled
+    const locationInput = document.getElementById("setup-location");
+    if (locationInput) {
+      locationInput.addEventListener("change", applyNpcSuggestions);
+    }
+
     const forceNew = new URLSearchParams(window.location.search).get("new") === "1";
 
     if (_scene && !forceNew) {
@@ -127,6 +133,22 @@ function renderNpcCheckboxes() {
     label.innerHTML = `<input type="checkbox" value="${n.id}"> ${escHtml(n.name)}${n.role ? ` <span class="muted">(${escHtml(n.role)})</span>` : ""}`;
     container.appendChild(label);
   });
+}
+
+// R5.4 — Pre-check NPCs suggested for the selected location
+async function applyNpcSuggestions() {
+  const location = (document.getElementById("setup-location")?.value || "").trim();
+  if (!location) return;
+  try {
+    const data = await fetchJSON(
+      `/api/campaigns/${CAMPAIGN_ID}/scene-suggestions?location=${encodeURIComponent(location)}`
+    );
+    const ids = new Set(data.suggested_npc_ids || []);
+    if (!ids.size) return;
+    document.querySelectorAll("#npc-checkboxes input[type=checkbox]").forEach(cb => {
+      if (ids.has(cb.value)) cb.checked = true;
+    });
+  } catch { /* silent — suggestions are optional */ }
 }
 
 // ── Scene setup quick-add helpers ────────────────────────────────────────────
@@ -927,8 +949,21 @@ function colorizeAiProse(container) {
 
 // ── End scene ─────────────────────────────────────────────────────────────────
 
-function openEndScene() {
-  document.getElementById("scene-summary-input").value = _scene?.proposed_summary || "";
+async function openEndScene() {
+  const summaryInput = document.getElementById("scene-summary-input");
+  // Use proposed_summary if already set, otherwise try the auto-generated draft (R6.1)
+  if (_scene?.proposed_summary) {
+    summaryInput.value = _scene.proposed_summary;
+  } else if (_scene?.id) {
+    try {
+      const data = await fetchJSON(
+        `/api/campaigns/${CAMPAIGN_ID}/scenes/${_scene.id}/chronicle-draft`
+      );
+      summaryInput.value = data.draft || "";
+    } catch { /* no draft yet — start blank */ }
+  } else {
+    summaryInput.value = "";
+  }
   openModal("end-scene-modal");
 }
 
@@ -1612,6 +1647,12 @@ function stopStreaming() {
     _streamAbort = null;
   }
 }
+
+// R4.4 — abort active stream on navigation to prevent orphaned DB writes
+window.addEventListener("beforeunload", () => _streamAbort?.abort());
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) _streamAbort?.abort();
+});
 
 function scrollToBottom() {
   const area = document.getElementById("messages-area");

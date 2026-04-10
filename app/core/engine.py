@@ -244,6 +244,21 @@ class RoleplayEngine:
             m.id for m in all_memories if m.last_referenced_at is not None
         }
 
+        # Compute query embedding for semantic retrieval (R2.1)
+        # Only fires when an embedding model is configured — no-op otherwise
+        query_embedding = None
+        if self.config.embedding_model and self.config.provider == "ollama":
+            from app.memory.embedder import embed_text
+            query_text = (user_message + " " + recent_text)[:1000]
+            query_embedding = embed_text(
+                query_text,
+                self.config.ollama_base_url,
+                self.config.embedding_model,
+            )
+
+        # Current turn count for turn-based recency decay (R2.2)
+        current_turn = session.turn_count
+
         relevant_memories = retrieve_memories(
             all_memories,
             scene,
@@ -254,8 +269,12 @@ class RoleplayEngine:
             weight_keyword=self.config.retrieval_weight_keyword,
             weight_recency=self.config.retrieval_weight_recency,
             weight_reference=self.config.retrieval_weight_reference,
+            weight_semantic=self.config.embedding_weight,
             recency_half_life=self.config.retrieval_recency_half_life_days,
             reference_half_life=self.config.retrieval_reference_half_life_days,
+            current_turn_number=current_turn,
+            turn_half_life=self.config.memory_turn_half_life,
+            query_embedding=query_embedding,
             type_caps={
                 "event": self.config.max_memories_event,
                 "world_fact": self.config.max_memories_world_fact,
@@ -414,6 +433,7 @@ class RoleplayEngine:
                 scene=ctx["scene"],
                 source_turn_ids=[user_turn.id, assistant_turn.id],
                 provider=provider,
+                source_turn_number=turn_count,
             )
 
         return response_text
@@ -523,6 +543,7 @@ class RoleplayEngine:
                 scene=ctx["scene"],
                 source_turn_ids=[user_turn.id, assistant_turn.id],
                 provider=provider,
+                source_turn_number=turn_count,
             )
 
         yield {
@@ -1176,16 +1197,18 @@ class RoleplayEngine:
         scene,
         source_turn_ids: list[str],
         provider,
+        source_turn_number: int = 0,
     ) -> None:
-        # One lock per session — extraction jobs for the same session run
-        # sequentially so they never race on memory/relationship writes.
+        # One lock per session — at most one extraction job runs per session at
+        # a time.  If a job is already in flight we skip (non-blocking acquire)
+        # rather than queuing, to avoid unbounded thread pile-up under heavy use.
         if session_id not in self._extraction_locks:
             self._extraction_locks[session_id] = threading.Lock()
         lock = self._extraction_locks[session_id]
 
         jobs = [
             (self._do_memory_extraction,
-             (session_id, user_message, assistant_message, scene, source_turn_ids, provider)),
+             (session_id, user_message, assistant_message, scene, source_turn_ids, provider, source_turn_number)),
             (self._do_relationship_extraction,
              (session_id, user_message, assistant_message, scene, provider)),
             (self._do_scene_extraction,
@@ -1194,12 +1217,20 @@ class RoleplayEngine:
              (session_id, user_message, assistant_message, scene, provider)),
         ]
 
-        def _run_serialized():
-            with lock:
+        def _run_if_idle():
+            if not lock.acquire(blocking=False):
+                log.debug(
+                    "Extraction skipped for session %s — previous job still running.",
+                    session_id,
+                )
+                return
+            try:
                 for fn, args in jobs:
                     fn(*args)
+            finally:
+                lock.release()
 
-        threading.Thread(target=_run_serialized, daemon=True).start()
+        threading.Thread(target=_run_if_idle, daemon=True).start()
 
     def _do_memory_extraction(
         self,
@@ -1209,6 +1240,7 @@ class RoleplayEngine:
         scene,
         source_turn_ids: list[str],
         provider,
+        source_turn_number: int = 0,
     ) -> None:
         try:
             new_memories = extract_memories(
@@ -1218,7 +1250,10 @@ class RoleplayEngine:
                 assistant_message=assistant_message,
                 scene=scene,
                 source_turn_ids=source_turn_ids,
+                source_turn_number=source_turn_number,
                 debug=self.config.show_memory_extraction or self.config.debug,
+                embedding_model=self.config.embedding_model,
+                embedding_base_url=self.config.ollama_base_url if self.config.provider == "ollama" else "",
             )
             if not new_memories:
                 log.info("Memory extraction: no new memories for this turn.")

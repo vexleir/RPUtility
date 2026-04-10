@@ -6,6 +6,7 @@ Registered as a sub-router in server.py.
 from __future__ import annotations
 
 import logging
+import threading
 import uuid as _uuid
 from datetime import datetime, UTC
 from typing import Optional
@@ -44,6 +45,104 @@ from app.campaigns.scene_prompter import build_scene_messages
 log = logging.getLogger("rp_utility")
 
 router = APIRouter(prefix="/api/campaigns", tags=["campaigns"])
+
+
+# ── Scene event-log background updater ───────────────────────────────────────
+
+_EVENT_LOG_EVERY_N_AI_TURNS = 10
+_EVENT_LOG_PROMPT = (
+    "You are a concise scene historian. Given the following roleplay exchanges, "
+    "write 3–6 short bullet points summarising the key events, decisions, and "
+    "outcomes that occurred. Each bullet should be one sentence. "
+    "Output ONLY the bullet points, one per line, starting each with '•'."
+)
+
+_CHRONICLE_DRAFT_EVERY_N_AI_TURNS = 10
+_CHRONICLE_DRAFT_PROMPT = (
+    "You are a narrative archivist. Given the following roleplay scene transcript, "
+    "write a 2–4 paragraph chronicle entry in past tense that captures the key story "
+    "events, character moments, and consequences. Write in an engaging, literary style "
+    "appropriate for a campaign journal. Output ONLY the chronicle text — no headers, "
+    "no bullet points, no metadata."
+)
+
+
+def _update_scene_event_log(scene_id: str) -> None:
+    """Background thread: summarise recent turns and append to scene_event_log."""
+    try:
+        store = _scenes()
+        scene = store.get(scene_id)
+        if not scene:
+            return
+
+        # Collect the turns not yet summarised
+        new_turns = scene.turns[scene.event_log_through_turn:]
+        if not new_turns:
+            return
+
+        # Build a compact transcript
+        lines: list[str] = []
+        for t in new_turns:
+            label = "Player" if t.role == "user" else "Narrator"
+            lines.append(f"{label}: {t.content[:400]}")
+        transcript = "\n\n".join(lines)
+
+        summary_model = config.ollama_model  # use default model
+        bullets = _ai_chat(
+            [
+                {"role": "system", "content": _EVENT_LOG_PROMPT},
+                {"role": "user", "content": transcript},
+            ],
+            model=summary_model,
+            temperature=0.3,
+            max_tokens=256,
+        )
+
+        new_entries = [
+            line.strip()
+            for line in bullets.splitlines()
+            if line.strip().startswith("•")
+        ]
+        if not new_entries:
+            return
+
+        scene.scene_event_log.extend(new_entries)
+        scene.event_log_through_turn = len(scene.turns)
+        store.save(scene)
+        log.debug("Event log updated for scene %s (%d new entries)", scene_id, len(new_entries))
+    except Exception:
+        log.exception("Failed to update scene event log for scene %s", scene_id)
+
+
+def _update_chronicle_draft(scene_id: str) -> None:
+    """Background thread: regenerate the proposed chronicle draft (R6.1)."""
+    try:
+        store = _scenes()
+        scene = store.get(scene_id)
+        if not scene or scene.confirmed:
+            return
+
+        lines: list[str] = []
+        for t in scene.turns:
+            label = "Player" if t.role == "user" else "Narrator"
+            lines.append(f"{label}: {t.content[:600]}")
+        transcript = "\n\n".join(lines)
+
+        draft = _ai_chat(
+            [
+                {"role": "system", "content": _CHRONICLE_DRAFT_PROMPT},
+                {"role": "user", "content": transcript},
+            ],
+            model=config.ollama_model,
+            temperature=0.5,
+            max_tokens=512,
+        )
+
+        scene.proposed_draft = draft.strip()
+        store.save(scene)
+        log.debug("Chronicle draft updated for scene %s", scene_id)
+    except Exception:
+        log.exception("Failed to update chronicle draft for scene %s", scene_id)
 
 # ── Provider-agnostic AI helpers ──────────────────────────────────────────────
 # All campaign routes should use these instead of calling Ollama directly.
@@ -516,6 +615,15 @@ def patch_world_fact(campaign_id: str, fact_id: str, req: PatchWorldFactRequest)
     return _fact_dict(updated)
 
 
+@router.post("/{campaign_id}/world-facts/{fact_id}/undo")
+def undo_world_fact(campaign_id: str, fact_id: str):
+    """Restore the previous content of a world fact (R5.5)."""
+    restored = _facts().undo_edit(fact_id)
+    if not restored:
+        raise HTTPException(404, "Fact not found")
+    return _fact_dict(restored)
+
+
 # ── Campaign notes (player scratchpad) ────────────────────────────────────────
 
 class PatchNotesRequest(BaseModel):
@@ -736,6 +844,27 @@ def get_active_scene(campaign_id: str):
     return _scene_dict(scene)
 
 
+@router.get("/{campaign_id}/scenes/{scene_id}/chronicle-draft")
+def get_chronicle_draft(campaign_id: str, scene_id: str):
+    """R6.1 — Return the latest auto-generated chronicle draft for a scene."""
+    scene = _scenes().get(scene_id)
+    if not scene or scene.campaign_id != campaign_id:
+        raise HTTPException(404, "Scene not found")
+    return {"draft": scene.proposed_draft or ""}
+
+
+@router.get("/{campaign_id}/scene-suggestions")
+def get_scene_suggestions(campaign_id: str, location: str = ""):
+    """R5.4 — Suggest NPCs to pre-select based on last confirmed scene at the same location."""
+    confirmed = _scenes().get_confirmed(campaign_id)
+    if not confirmed:
+        return {"suggested_npc_ids": []}
+    last = confirmed[-1]
+    if not location or last.location.lower() == location.lower():
+        return {"suggested_npc_ids": last.npc_ids}
+    return {"suggested_npc_ids": []}
+
+
 @router.post("/{campaign_id}/scenes", status_code=201)
 def create_scene(campaign_id: str, req: CreateSceneRequest):
     _require_campaign(campaign_id)
@@ -927,6 +1056,21 @@ def scene_regenerate_stream(campaign_id: str, scene_id: str, req: SceneRegenerat
 
         scene.turns.append(SceneTurn(role="assistant", content="".join(full_response)))
         scene_store.save(scene)
+
+        # Every N AI turns, refresh the scene event log + chronicle draft in background threads
+        ai_turn_count = sum(1 for t in scene.turns if t.role == "assistant")
+        if ai_turn_count % _EVENT_LOG_EVERY_N_AI_TURNS == 0:
+            threading.Thread(
+                target=_update_scene_event_log,
+                args=(scene.id,),
+                daemon=True,
+            ).start()
+        if ai_turn_count % _CHRONICLE_DRAFT_EVERY_N_AI_TURNS == 0:
+            threading.Thread(
+                target=_update_chronicle_draft,
+                args=(scene.id,),
+                daemon=True,
+            ).start()
 
     return StreamingResponse(_stream(), media_type="text/plain")
 
@@ -2414,6 +2558,21 @@ def scene_open_stream(campaign_id: str, scene_id: str, req: SceneOpenRequest):
         scene.turns.append(SceneTurn(role="assistant", content="".join(full_response)))
         scene_store.save(scene)
 
+        # Every N AI turns, refresh the scene event log + chronicle draft in background threads
+        ai_turn_count = sum(1 for t in scene.turns if t.role == "assistant")
+        if ai_turn_count % _EVENT_LOG_EVERY_N_AI_TURNS == 0:
+            threading.Thread(
+                target=_update_scene_event_log,
+                args=(scene.id,),
+                daemon=True,
+            ).start()
+        if ai_turn_count % _CHRONICLE_DRAFT_EVERY_N_AI_TURNS == 0:
+            threading.Thread(
+                target=_update_chronicle_draft,
+                args=(scene.id,),
+                daemon=True,
+            ).start()
+
     return StreamingResponse(_stream(), media_type="text/plain")
 
 
@@ -2507,6 +2666,21 @@ def scene_chat_stream(campaign_id: str, scene_id: str, req: SceneChatRequest):
         # Persist both turns to the scene
         scene.turns.append(SceneTurn(role="assistant", content="".join(full_response)))
         scene_store.save(scene)
+
+        # Every N AI turns, refresh the scene event log + chronicle draft in background threads
+        ai_turn_count = sum(1 for t in scene.turns if t.role == "assistant")
+        if ai_turn_count % _EVENT_LOG_EVERY_N_AI_TURNS == 0:
+            threading.Thread(
+                target=_update_scene_event_log,
+                args=(scene.id,),
+                daemon=True,
+            ).start()
+        if ai_turn_count % _CHRONICLE_DRAFT_EVERY_N_AI_TURNS == 0:
+            threading.Thread(
+                target=_update_chronicle_draft,
+                args=(scene.id,),
+                daemon=True,
+            ).start()
 
     return StreamingResponse(_stream(), media_type="text/plain")
 
@@ -2873,6 +3047,8 @@ def _fact_dict(f) -> dict:
         "trigger_keywords": f.trigger_keywords if hasattr(f, "trigger_keywords") else [],
         "fact_order": f.fact_order,
         "created_at": f.created_at.isoformat(),
+        "previous_content": getattr(f, "previous_content", None),
+        "edited_at": f.edited_at.isoformat() if getattr(f, "edited_at", None) else None,
     }
 
 

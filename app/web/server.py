@@ -7,6 +7,7 @@ Start with: python -m app.main serve
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -62,6 +63,7 @@ app.include_router(campaign_router)
 
 # Single engine instance shared across requests
 _engine: Optional[RoleplayEngine] = None
+_engine_lock = threading.Lock()   # guards config mutation + engine rebuild
 
 
 def get_engine() -> RoleplayEngine:
@@ -646,33 +648,34 @@ def api_save_provider_settings(req: ProviderSettingsRequest):
     if req.provider not in ("ollama", "lmstudio", "koboldcpp"):
         raise HTTPException(status_code=400, detail="Invalid provider")
 
-    # Update the in-memory singleton so all code sees the change immediately
-    config.provider = req.provider  # type: ignore[assignment]
-    config.ollama_base_url = req.ollama_base_url
-    if req.ollama_model:
-        config.ollama_model = req.ollama_model
-    config.lmstudio_base_url = req.lmstudio_base_url
-    if req.lmstudio_model:
-        config.lmstudio_model = req.lmstudio_model
-    config.koboldcpp_base_url = req.koboldcpp_base_url
+    with _engine_lock:
+        # Update the in-memory singleton so all code sees the change immediately
+        config.provider = req.provider  # type: ignore[assignment]
+        config.ollama_base_url = req.ollama_base_url
+        if req.ollama_model:
+            config.ollama_model = req.ollama_model
+        config.lmstudio_base_url = req.lmstudio_base_url
+        if req.lmstudio_model:
+            config.lmstudio_model = req.lmstudio_model
+        config.koboldcpp_base_url = req.koboldcpp_base_url
 
-    # Persist to override file so the settings survive a server restart
-    to_save = {
-        "provider": req.provider,
-        "ollama_base_url": req.ollama_base_url,
-        "lmstudio_base_url": req.lmstudio_base_url,
-        "koboldcpp_base_url": req.koboldcpp_base_url,
-    }
-    if req.ollama_model:
-        to_save["ollama_model"] = req.ollama_model
-    if req.lmstudio_model:
-        to_save["lmstudio_model"] = req.lmstudio_model
+        # Persist to override file so the settings survive a server restart
+        to_save = {
+            "provider": req.provider,
+            "ollama_base_url": req.ollama_base_url,
+            "lmstudio_base_url": req.lmstudio_base_url,
+            "koboldcpp_base_url": req.koboldcpp_base_url,
+        }
+        if req.ollama_model:
+            to_save["ollama_model"] = req.ollama_model
+        if req.lmstudio_model:
+            to_save["lmstudio_model"] = req.lmstudio_model
 
-    _PROVIDER_SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _PROVIDER_SETTINGS_FILE.write_text(json.dumps(to_save, indent=2), encoding="utf-8")
+        _PROVIDER_SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _PROVIDER_SETTINGS_FILE.write_text(json.dumps(to_save, indent=2), encoding="utf-8")
 
-    # Rebuild the engine with the new provider
-    _engine = RoleplayEngine(config)
+        # Rebuild the engine with the new provider
+        _engine = RoleplayEngine(config)
 
     return {
         "ok": True,

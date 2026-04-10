@@ -115,7 +115,11 @@ function renderAll() {
     catGroups[cat].forEach(f => {
       const li = document.createElement("li");
       li.className = "world-fact-item";
+      const undoBtn = f.previous_content
+        ? `<button class="btn-icon fact-undo-btn" onclick="undoFact('${f.id}')" title="Undo last edit">↩</button>`
+        : "";
       li.innerHTML = `<span>${escHtml(f.content)}</span>
+        ${undoBtn}
         <button class="btn-icon fact-edit-btn" onclick="openEditFact(${escHtml(JSON.stringify(f))})" title="Edit">✎</button>
         <button class="btn-icon fact-delete-btn" onclick="deleteFact('${f.id}')" title="Delete">✕</button>`;
       factsList.appendChild(li);
@@ -566,6 +570,16 @@ async function deleteFact(factId) {
   await fetch(`/api/campaigns/${CAMPAIGN_ID}/world-facts/${factId}`, { method: "DELETE" });
   _facts = _facts.filter(f => f.id !== factId);
   renderAll();
+}
+
+async function undoFact(factId) {
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/world-facts/${factId}/undo`, { method: "POST" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const restored = await res.json();
+    _facts = _facts.map(f => f.id === factId ? restored : f);
+    renderAll();
+  } catch (e) { showBanner(`Undo failed: ${e.message}`, "error"); }
 }
 
 // ── Scene transcript viewer ───────────────────────────────────────────────────

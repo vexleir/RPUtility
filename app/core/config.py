@@ -46,10 +46,13 @@ class Config(BaseSettings):
     context_window: int = 8192
 
     # ── Memory settings ────────────────────────────────────────────────────
-    max_retrieved_memories: int = 15
+    max_retrieved_memories: int = 20
     memory_extraction_enabled: bool = True
     # Model used for memory extraction (can be a smaller/faster model)
     extraction_model: str = ""   # empty = use same as main model
+    # Embedding model for semantic memory search (e.g. "nomic-embed-text")
+    embedding_model: str = ""    # empty = disabled; Ollama only
+    embedding_weight: float = 1.5
 
     # ── Conversation history window ────────────────────────────────────────
     # How many recent turns to keep in the prompt. Increase for longer sessions.
@@ -65,13 +68,15 @@ class Config(BaseSettings):
     retrieval_reference_half_life_days: float = 14.0
 
     # Per-type memory caps (0 = no cap)
-    max_memories_event: int = 6
-    max_memories_world_fact: int = 5
-    max_memories_character_detail: int = 5
-    max_memories_relationship_change: int = 4
-    max_memories_world_state: int = 4
-    max_memories_rumor: int = 2
-    max_memories_suspicion: int = 2
+    max_memories_event: int = 8
+    max_memories_world_fact: int = 6
+    max_memories_character_detail: int = 6
+    max_memories_relationship_change: int = 5
+    max_memories_world_state: int = 5
+    max_memories_rumor: int = 3
+    max_memories_suspicion: int = 3
+    # Turn-based recency decay
+    memory_turn_half_life: float = 40.0   # turns before recency score halves
 
     # ── Memory consolidation ───────────────────────────────────────────────
     consolidation_enabled: bool = True

@@ -20,6 +20,7 @@ from app.core.database import get_connection, json_encode, json_decode
 from app.core.models import (
     MemoryEntry, MemoryType, ImportanceLevel, CertaintyLevel, ContradictonFlag
 )
+from app.memory.embedder import encode_embedding, decode_embedding
 
 
 class MemoryStore:
@@ -33,16 +34,17 @@ class MemoryStore:
 
     def save(self, entry: MemoryEntry) -> None:
         """Insert or update a memory entry."""
+        embedding_blob = encode_embedding(entry.embedding) if entry.embedding else None
         with self._conn() as conn:
             conn.execute(
                 """
                 INSERT INTO memories
                     (id, session_id, created_at, updated_at, type, title, content,
                      entities, location, tags, importance, last_referenced_at,
-                     source_turn_ids, confidence,
-                     certainty, consolidated_from, contradiction_of, archived)
+                     source_turn_ids, source_turn_number, confidence,
+                     certainty, consolidated_from, contradiction_of, archived, embedding)
                 VALUES
-                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     updated_at          = excluded.updated_at,
                     title               = excluded.title,
@@ -53,11 +55,13 @@ class MemoryStore:
                     importance          = excluded.importance,
                     last_referenced_at  = excluded.last_referenced_at,
                     source_turn_ids     = excluded.source_turn_ids,
+                    source_turn_number  = excluded.source_turn_number,
                     confidence          = excluded.confidence,
                     certainty           = excluded.certainty,
                     consolidated_from   = excluded.consolidated_from,
                     contradiction_of    = excluded.contradiction_of,
-                    archived            = excluded.archived
+                    archived            = excluded.archived,
+                    embedding           = excluded.embedding
                 """,
                 (
                     entry.id,
@@ -73,11 +77,13 @@ class MemoryStore:
                     entry.importance.value,
                     entry.last_referenced_at.isoformat() if entry.last_referenced_at else None,
                     json_encode(entry.source_turn_ids),
+                    entry.source_turn_number,
                     entry.confidence,
                     entry.certainty.value,
                     json_encode(entry.consolidated_from),
                     entry.contradiction_of,
                     int(entry.archived),
+                    embedding_blob,
                 ),
             )
 
@@ -235,6 +241,17 @@ def _row_to_entry(row: sqlite3.Row) -> MemoryEntry:
     except Exception:
         archived = False
 
+    try:
+        source_turn_number = int(row["source_turn_number"])
+    except Exception:
+        source_turn_number = 0
+
+    try:
+        blob = row["embedding"]
+        embedding = decode_embedding(blob) if blob else None
+    except Exception:
+        embedding = None
+
     return MemoryEntry(
         id=row["id"],
         session_id=row["session_id"],
@@ -252,11 +269,13 @@ def _row_to_entry(row: sqlite3.Row) -> MemoryEntry:
             if row["last_referenced_at"] else None
         ),
         source_turn_ids=json_decode(row["source_turn_ids"]),
+        source_turn_number=source_turn_number,
         confidence=row["confidence"],
         certainty=certainty,
         consolidated_from=consolidated_from,
         contradiction_of=contradiction_of,
         archived=archived,
+        embedding=embedding,
     )
 
 

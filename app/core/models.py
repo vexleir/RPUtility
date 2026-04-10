@@ -63,12 +63,15 @@ class MemoryEntry(BaseModel):
     importance: ImportanceLevel = ImportanceLevel.MEDIUM
     last_referenced_at: Optional[datetime] = None
     source_turn_ids: list[str] = Field(default_factory=list)
+    source_turn_number: int = 0   # turn number when extracted (for turn-based recency)
     confidence: float = 1.0   # 0.0–1.0; lower for rumors
     # Phase 2 additions — backward compatible (all Optional with safe defaults)
     certainty: CertaintyLevel = CertaintyLevel.CONFIRMED
     consolidated_from: list[str] = Field(default_factory=list)  # source memory IDs
     contradiction_of: Optional[str] = None   # ID of memory this contradicts
     archived: bool = False   # soft-deleted by consolidation; kept for debug
+    # R2.1 — embedding vector for semantic retrieval (not persisted to model; stored as BLOB in DB)
+    embedding: Optional[list[float]] = Field(default=None, exclude=True)
 
 
 class WorldStateEntry(BaseModel):
@@ -629,6 +632,8 @@ class CampaignWorldFact(BaseModel):
     trigger_keywords: list[str] = Field(default_factory=list)  # inject only when these words appear in recent turns
     fact_order: int = 0
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    previous_content: Optional[str] = None   # R5.5 — undo: value before last edit
+    edited_at: Optional[datetime] = None     # R5.5 — timestamp of last edit
 
 
 class CampaignPlace(BaseModel):
@@ -746,6 +751,11 @@ class CampaignScene(BaseModel):
     confirmed: bool = False
     allow_unselected_npcs: bool = False   # AI may incorporate world NPCs not added to scene
     scene_image: Optional[str] = None     # base64 data URL set via image generation
+    # R2.5 — rolling event log extracted every N turns to preserve long-scene context
+    scene_event_log: list[str] = Field(default_factory=list)
+    event_log_through_turn: int = 0      # how many turns the log covers
+    # R6.1 — auto-chronicle draft generated in background every 10 AI turns
+    proposed_draft: str = ""
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 

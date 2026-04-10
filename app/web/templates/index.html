@@ -30,6 +30,7 @@
       <h2 style="margin:0">Campaigns</h2>
       <div style="display:flex;gap:8px">
         <button class="btn btn-sm" onclick="openImportTemplateModal()">⬆ Import Template</button>
+        <button class="btn btn-sm" onclick="openQuickPlayModal()" title="Start a quick one-off roleplay without a campaign">⚡ Quick Play</button>
         <a href="/campaigns/new" class="btn btn-primary btn-sm" style="text-decoration:none">+ New Campaign</a>
       </div>
     </div>
@@ -240,6 +241,46 @@
     </div>
   </div>
 
+  <!-- ── Quick Play Modal ───────────────────────────────────────────────────── -->
+  <div id="quick-play-modal" class="modal-backdrop hidden">
+    <div class="modal-box" style="max-width:500px">
+      <button class="modal-close" onclick="closeQuickPlayModal()">✕</button>
+      <h3 style="margin:0 0 4px">⚡ Quick Play</h3>
+      <p class="dim" style="font-size:13px;margin-bottom:16px">Start a one-off roleplay session without setting up a full campaign.</p>
+
+      <div class="form-group">
+        <label for="qp-session-name">Session Name</label>
+        <input type="text" id="qp-session-name" placeholder="e.g. The Crosshaven Affair">
+      </div>
+      <div class="form-group">
+        <label for="qp-char-name">Character Name <span class="dim">(the AI's name)</span></label>
+        <input type="text" id="qp-char-name" placeholder="e.g. Mira, The Narrator, DM">
+      </div>
+      <div class="form-group">
+        <label for="qp-description">Description &amp; Personality</label>
+        <textarea id="qp-description" rows="3" placeholder="Describe who this character is and how they speak."></textarea>
+      </div>
+      <div class="form-group">
+        <label for="qp-scenario">World &amp; Opening Situation <span class="dim">(optional)</span></label>
+        <textarea id="qp-scenario" rows="4" placeholder="Describe the setting, world rules, or situation to drop into."></textarea>
+      </div>
+      <div class="form-group">
+        <label for="qp-opening-line">Opening Line <span class="dim">(optional — what the AI says first)</span></label>
+        <input type="text" id="qp-opening-line" placeholder="e.g. Welcome, traveller. What brings you to my tavern?">
+      </div>
+      <div class="form-group">
+        <label for="qp-location">Starting Location <span class="dim">(optional)</span></label>
+        <input type="text" id="qp-location" placeholder="e.g. The Rusty Flagon Tavern">
+      </div>
+      <div id="qp-status" class="dim" style="font-size:13px;min-height:18px"></div>
+      <div style="display:flex;gap:10px;margin-top:16px">
+        <button class="btn btn-primary" onclick="runQuickPlay()" id="qp-start-btn" style="flex:1;justify-content:center">Start →</button>
+        <button class="btn" onclick="closeQuickPlayModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/utils.js?v={{CACHE_VER}}"></script>
   <script src="/static/index.js?v={{CACHE_VER}}"></script>
 </body>
 </html>

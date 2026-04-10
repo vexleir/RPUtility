@@ -172,11 +172,14 @@ class WorldFactStore:
         with get_connection(self._db) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO campaign_world_facts "
-                "(id,campaign_id,content,category,priority,trigger_keywords,fact_order,created_at) "
-                "VALUES (?,?,?,?,?,?,?,?)",
+                "(id,campaign_id,content,category,priority,trigger_keywords,fact_order,created_at,"
+                "previous_content,edited_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (fact.id, fact.campaign_id, fact.content, fact.category,
                  fact.priority, json_encode(fact.trigger_keywords),
-                 fact.fact_order, fact.created_at.isoformat()),
+                 fact.fact_order, fact.created_at.isoformat(),
+                 fact.previous_content,
+                 fact.edited_at.isoformat() if fact.edited_at else None),
             )
 
     def save_many(self, facts: list[CampaignWorldFact]) -> None:
@@ -185,7 +188,7 @@ class WorldFactStore:
 
     def update(self, fact_id: str, content: str | None = None, category: str | None = None,
                priority: str | None = None, trigger_keywords: list | None = None) -> CampaignWorldFact | None:
-        """Update fields of an individual fact."""
+        """Update fields of an individual fact, preserving previous content for undo (R5.5)."""
         with get_connection(self._db) as conn:
             row = conn.execute(
                 "SELECT * FROM campaign_world_facts WHERE id=?", (fact_id,)
@@ -193,7 +196,10 @@ class WorldFactStore:
             if not row:
                 return None
             fact = _row_to_fact(row)
-            if content is not None:
+            if content is not None and content != fact.content:
+                # Save old content for undo before overwriting
+                fact.previous_content = fact.content
+                fact.edited_at = _now()
                 fact.content = content
             if category is not None:
                 fact.category = category
@@ -202,9 +208,33 @@ class WorldFactStore:
             if trigger_keywords is not None:
                 fact.trigger_keywords = trigger_keywords
             conn.execute(
-                "UPDATE campaign_world_facts SET content=?,category=?,priority=?,trigger_keywords=? WHERE id=?",
+                "UPDATE campaign_world_facts "
+                "SET content=?,category=?,priority=?,trigger_keywords=?,previous_content=?,edited_at=? "
+                "WHERE id=?",
                 (fact.content, fact.category, fact.priority,
-                 json_encode(fact.trigger_keywords), fact_id),
+                 json_encode(fact.trigger_keywords),
+                 fact.previous_content,
+                 fact.edited_at.isoformat() if fact.edited_at else None,
+                 fact_id),
+            )
+        return fact
+
+    def undo_edit(self, fact_id: str) -> CampaignWorldFact | None:
+        """Restore previous_content (R5.5). Clears undo state after use."""
+        with get_connection(self._db) as conn:
+            row = conn.execute(
+                "SELECT * FROM campaign_world_facts WHERE id=?", (fact_id,)
+            ).fetchone()
+            if not row:
+                return None
+            fact = _row_to_fact(row)
+            if fact.previous_content is None:
+                return fact  # nothing to undo
+            fact.content, fact.previous_content = fact.previous_content, None
+            fact.edited_at = None
+            conn.execute(
+                "UPDATE campaign_world_facts SET content=?,previous_content=NULL,edited_at=NULL WHERE id=?",
+                (fact.content, fact_id),
             )
         return fact
 
@@ -245,6 +275,8 @@ class WorldFactStore:
 def _row_to_fact(row) -> CampaignWorldFact:
     keys = row.keys() if hasattr(row, "keys") else []
     raw_kw = json_decode(row["trigger_keywords"]) if "trigger_keywords" in keys and row["trigger_keywords"] else []
+    prev = row["previous_content"] if "previous_content" in keys else None
+    edited_raw = row["edited_at"] if "edited_at" in keys else None
     return CampaignWorldFact(
         id=row["id"], campaign_id=row["campaign_id"],
         content=row["content"],
@@ -253,6 +285,8 @@ def _row_to_fact(row) -> CampaignWorldFact:
         trigger_keywords=raw_kw if isinstance(raw_kw, list) else [],
         fact_order=row["fact_order"],
         created_at=datetime.fromisoformat(row["created_at"]),
+        previous_content=prev,
+        edited_at=datetime.fromisoformat(edited_raw) if edited_raw else None,
     )
 
 
@@ -496,8 +530,10 @@ class SceneStore:
                 INSERT INTO campaign_scenes
                     (id,campaign_id,scene_number,title,location,npc_ids,intent,tone,
                      turns,proposed_summary,confirmed_summary,confirmed,
-                     allow_unselected_npcs,scene_image,created_at,updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     allow_unselected_npcs,scene_image,
+                     scene_event_log,event_log_through_turn,proposed_draft,
+                     created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(id) DO UPDATE SET
                     title=excluded.title, location=excluded.location,
                     npc_ids=excluded.npc_ids, intent=excluded.intent, tone=excluded.tone,
@@ -506,6 +542,9 @@ class SceneStore:
                     confirmed=excluded.confirmed,
                     allow_unselected_npcs=excluded.allow_unselected_npcs,
                     scene_image=excluded.scene_image,
+                    scene_event_log=excluded.scene_event_log,
+                    event_log_through_turn=excluded.event_log_through_turn,
+                    proposed_draft=excluded.proposed_draft,
                     updated_at=excluded.updated_at
             """, (
                 scene.id, scene.campaign_id, scene.scene_number, scene.title,
@@ -516,6 +555,9 @@ class SceneStore:
                 int(scene.confirmed),
                 int(scene.allow_unselected_npcs),
                 scene.scene_image,
+                json_encode(scene.scene_event_log),
+                scene.event_log_through_turn,
+                scene.proposed_draft,
                 scene.created_at.isoformat(), scene.updated_at.isoformat(),
             ))
 
@@ -572,6 +614,7 @@ class SceneStore:
 def _row_to_scene(row) -> CampaignScene:
     raw_turns = json_decode(row["turns"])
     turns = [SceneTurn(**t) for t in raw_turns] if raw_turns else []
+    keys = row.keys() if hasattr(row, "keys") else []
     return CampaignScene(
         id=row["id"], campaign_id=row["campaign_id"],
         scene_number=row["scene_number"], title=row["title"],
@@ -581,8 +624,11 @@ def _row_to_scene(row) -> CampaignScene:
         proposed_summary=row["proposed_summary"],
         confirmed_summary=row["confirmed_summary"],
         confirmed=bool(row["confirmed"]),
-        allow_unselected_npcs=bool(row["allow_unselected_npcs"]) if "allow_unselected_npcs" in row.keys() else False,
-        scene_image=row["scene_image"] if "scene_image" in row.keys() else None,
+        allow_unselected_npcs=bool(row["allow_unselected_npcs"]) if "allow_unselected_npcs" in keys else False,
+        scene_image=row["scene_image"] if "scene_image" in keys else None,
+        scene_event_log=json_decode(row["scene_event_log"]) if "scene_event_log" in keys and row["scene_event_log"] else [],
+        event_log_through_turn=int(row["event_log_through_turn"]) if "event_log_through_turn" in keys and row["event_log_through_turn"] else 0,
+        proposed_draft=row["proposed_draft"] if "proposed_draft" in keys and row["proposed_draft"] else "",
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )

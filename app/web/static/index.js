@@ -676,6 +676,69 @@ async function saveProviderSettings() {
   }
 }
 
+// ── Quick Play Modal ──────────────────────────────────────────────────────────
+function openQuickPlayModal() {
+  ["qp-session-name","qp-char-name","qp-description","qp-scenario","qp-opening-line","qp-location"]
+    .forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
+  document.getElementById("qp-status").textContent = "";
+  const btn = document.getElementById("qp-start-btn");
+  if (btn) { btn.disabled = false; btn.textContent = "Start →"; }
+  document.getElementById("quick-play-modal").classList.remove("hidden");
+  setTimeout(() => document.getElementById("qp-session-name").focus(), 50);
+}
+
+function closeQuickPlayModal() {
+  document.getElementById("quick-play-modal").classList.add("hidden");
+}
+
+async function runQuickPlay() {
+  const statusEl = document.getElementById("qp-status");
+  const btn = document.getElementById("qp-start-btn");
+
+  const sessionName  = document.getElementById("qp-session-name").value.trim();
+  const charName     = document.getElementById("qp-char-name").value.trim() || "Character";
+  const description  = document.getElementById("qp-description").value.trim();
+  const scenario     = document.getElementById("qp-scenario").value.trim();
+  const openingLine  = document.getElementById("qp-opening-line").value.trim();
+  const location     = document.getElementById("qp-location").value.trim() || "Unknown";
+
+  if (!sessionName) { statusEl.textContent = "Please enter a session name."; return; }
+  if (!description) { statusEl.textContent = "Please describe the character."; return; }
+
+  // Build a structured scenario_text from the separate fields
+  const parts = [`Character: ${charName}`, `Description: ${description}`];
+  if (scenario) parts.push(`Setting & situation: ${scenario}`);
+  if (openingLine) parts.push(`Opening line: "${openingLine}"`);
+  const scenarioText = parts.join("\n\n");
+
+  btn.disabled = true;
+  btn.textContent = "Creating…";
+  statusEl.textContent = "";
+
+  try {
+    const res = await fetch("/api/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: sessionName,
+        character_name: charName,
+        location,
+        scenario_text: scenarioText,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `Server error ${res.status}`);
+    }
+    const session = await res.json();
+    window.location.href = `/chat/${session.id}`;
+  } catch (err) {
+    statusEl.textContent = `⚠ ${err.message}`;
+    btn.disabled = false;
+    btn.textContent = "Start →";
+  }
+}
+
 // ── Utilities ─────────────────────────────────────────────────────────────────
 function esc(str) {
   return String(str ?? "")

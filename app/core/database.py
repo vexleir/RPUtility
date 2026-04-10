@@ -55,6 +55,18 @@ def _migrate(conn: sqlite3.Connection) -> None:
         except Exception:
             pass  # column already exists
 
+    # R2.1 — embedding vector for semantic memory retrieval (BLOB; nullable)
+    try:
+        conn.execute("ALTER TABLE memories ADD COLUMN embedding BLOB")
+    except Exception:
+        pass  # column already exists
+
+    # R2.2 — turn number when the memory was extracted (for turn-based recency decay)
+    try:
+        conn.execute("ALTER TABLE memories ADD COLUMN source_turn_number INTEGER NOT NULL DEFAULT 0")
+    except Exception:
+        pass  # column already exists
+
     # v2 → v3 (Phase 2): world_state table
     # Note: SQLite does not support adding FK constraints via ALTER TABLE.
     # Tables created here for the first time include FKs; existing tables retain
@@ -444,6 +456,22 @@ def _migrate(conn: sqlite3.Connection) -> None:
     except Exception:
         pass  # column already exists
 
+    # R2.5 — scene working memory: rolling event log for long scenes
+    for _col in [
+        "scene_event_log TEXT NOT NULL DEFAULT '[]'",
+        "event_log_through_turn INTEGER NOT NULL DEFAULT 0",
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE campaign_scenes ADD COLUMN {_col}")
+        except Exception:
+            pass  # column already exists
+
+    # R6.1 — auto-chronicle draft generated in background every N AI turns
+    try:
+        conn.execute("ALTER TABLE campaign_scenes ADD COLUMN proposed_draft TEXT NOT NULL DEFAULT ''")
+    except Exception:
+        pass  # column already exists
+
     # NPC forms, transformation history, and player relationship history
     for _col in [
         "history_with_player TEXT NOT NULL DEFAULT ''",
@@ -459,6 +487,16 @@ def _migrate(conn: sqlite3.Connection) -> None:
     for _col in [
         "priority TEXT NOT NULL DEFAULT 'normal'",
         "trigger_keywords TEXT NOT NULL DEFAULT '[]'",
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE campaign_world_facts ADD COLUMN {_col}")
+        except Exception:
+            pass  # column already exists
+
+    # R5.5 — World fact undo: store previous content before each edit
+    for _col in [
+        "previous_content TEXT",
+        "edited_at TEXT",
     ]:
         try:
             conn.execute(f"ALTER TABLE campaign_world_facts ADD COLUMN {_col}")

@@ -22,9 +22,13 @@ from app.core.models import (
     MemoryEntry, MemoryType, ImportanceLevel, CertaintyLevel, SceneState
 )
 from app.providers.base import BaseProvider
+from app.memory.embedder import embed_text
 
-# Max characters for user/assistant messages sent to extraction model.
-_MAX_INPUT_CHARS = 1500
+# Max characters for the combined extraction input.
+# We budget more to the assistant message (story outcomes land there)
+# and cap the user message separately.
+_MAX_TOTAL_CHARS = 4000
+_MAX_USER_CHARS = 1200    # user turns are usually short; reserve most budget for AI response
 
 # ── Extraction prompt ──────────────────────────────────────────────────────────
 
@@ -107,7 +111,11 @@ def extract_memories(
     assistant_message: str,
     scene: Optional[SceneState],
     source_turn_ids: list[str],
+    source_turn_number: int = 0,
     debug: bool = False,
+    # Embedding config — pass to generate semantic vectors at extraction time
+    embedding_model: str = "",
+    embedding_base_url: str = "",
 ) -> list[MemoryEntry]:
     """
     Run memory extraction for one conversation exchange.
@@ -118,11 +126,14 @@ def extract_memories(
     active_characters: list[str] = scene.active_characters if scene and scene.active_characters else []
     characters = ", ".join(active_characters) if active_characters else "Unknown"
 
+    user_budget = min(len(user_message), _MAX_USER_CHARS)
+    asst_budget = _MAX_TOTAL_CHARS - user_budget
+
     prompt = EXTRACTION_USER_TEMPLATE.format(
         location=location,
         characters=characters,
-        user_message=user_message[:_MAX_INPUT_CHARS],
-        assistant_message=assistant_message[:_MAX_INPUT_CHARS],
+        user_message=user_message[:user_budget],
+        assistant_message=assistant_message[:asst_budget],
     )
 
     if debug:
@@ -141,7 +152,19 @@ def extract_memories(
             logging.getLogger("rp_utility").debug("Extraction response:\n%s", raw)
 
         items = _parse_json_response(raw)
-        return _build_entries(items, session_id, source_turn_ids, active_characters)
+        entries = _build_entries(
+            items, session_id, source_turn_ids, active_characters,
+            source_turn_number=source_turn_number,
+        )
+
+        # Generate embeddings if an embedding model is configured
+        if embedding_model and embedding_base_url and entries:
+            for entry in entries:
+                entry.embedding = embed_text(
+                    entry.content, embedding_base_url, embedding_model
+                )
+
+        return entries
 
     except Exception as e:
         if debug:
@@ -175,6 +198,7 @@ def _build_entries(
     session_id: str,
     source_turn_ids: list[str],
     active_characters: list[str] | None = None,
+    source_turn_number: int = 0,
 ) -> list[MemoryEntry]:
     """Convert raw dicts from the model into validated MemoryEntry objects."""
     now = datetime.now(UTC).replace(tzinfo=None)
@@ -221,6 +245,7 @@ def _build_entries(
                 tags=[str(t) for t in item.get("tags", [])],
                 importance=importance,
                 source_turn_ids=source_turn_ids,
+                source_turn_number=source_turn_number,
                 confidence=confidence,
                 certainty=certainty,
             )
