@@ -660,6 +660,10 @@ async function saveProviderSettings() {
       label.textContent = `${data.provider} offline`;
     }
 
+    // Clear any stale provider-offline banner and re-check status
+    hideBanners();
+    await checkProvider();
+
     // Refresh model list if switching to a multi-model provider
     if (data.supports_model_selection) await loadModels();
 

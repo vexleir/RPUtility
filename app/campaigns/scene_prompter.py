@@ -152,6 +152,11 @@ def _build_system(
         "Your role is to play the world — narrate events, voice NPCs, describe consequences.",
         "You do NOT play the player character. Respond to what the player does.",
         "Keep responses immersive, vivid, and grounded in the world document below.",
+        "",
+        "WORLD FIDELITY RULES:",
+        "- [WORLD FACTS] and [STORY SO FAR] are the established truth of this world. Never contradict or undo them.",
+        "- You may freely invent new lore, NPC backstory, history, and detail — but only if it does not conflict with what is already established.",
+        "- If something has already happened in the story, treat it as fixed fact.",
     ]
     if style:
         role_lines.append(f"Narration style: {style}")
@@ -182,11 +187,11 @@ def _build_system(
             cat = (f.category or "").strip()
             grouped[cat].append(f)
 
-        fact_block_lines = ["[WORLD FACTS]"]
+        fact_block_lines = ["[WORLD FACTS — established truth; do not contradict these]"]
         # Critical facts always at top under a CRITICAL marker
         critical = [f for f in fact_texts if f.priority == "critical"]
         if critical:
-            fact_block_lines.append("  [CRITICAL — always true]")
+            fact_block_lines.append("  [CRITICAL — never contradict]")
             for f in critical:
                 fact_block_lines.append(f"• {f.content}")
 
@@ -219,7 +224,7 @@ def _build_system(
             tail = [e for e in tail if e.id not in anchor_ids]
             recap = anchor + tail
 
-        chron_lines = ["[STORY SO FAR]"]
+        chron_lines = ["[STORY SO FAR — events that have already occurred; treat as fixed history]"]
         if len(confirmed_sorted) > _CHRON_THRESHOLD:
             skipped = len(confirmed_sorted) - len(recap)
             if skipped > 0:
