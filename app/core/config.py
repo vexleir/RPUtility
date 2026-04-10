@@ -27,7 +27,7 @@ class Config(BaseSettings):
     )
 
     # ── Provider settings ──────────────────────────────────────────────────
-    provider: Literal["ollama", "lmstudio"] = "ollama"
+    provider: Literal["ollama", "lmstudio", "koboldcpp"] = "ollama"
 
     # Ollama
     ollama_base_url: str = "http://localhost:11434"
@@ -36,6 +36,9 @@ class Config(BaseSettings):
     # LM Studio
     lmstudio_base_url: str = "http://localhost:1234"
     lmstudio_model: str = "local-model"   # usually auto-detected by LM Studio
+
+    # KoboldCPP — single model loaded at startup, no per-request model selection
+    koboldcpp_base_url: str = "http://localhost:5001"
 
     # ── Generation parameters ──────────────────────────────────────────────
     temperature: float = 0.8
@@ -109,7 +112,22 @@ class Config(BaseSettings):
         """Return the model name for the active provider."""
         if self.provider == "ollama":
             return self.ollama_model
-        return self.lmstudio_model
+        if self.provider == "lmstudio":
+            return self.lmstudio_model
+        # koboldcpp: model is set at load time, no name to report
+        return "koboldcpp"
+
+    def active_base_url(self) -> str:
+        """Return the base URL for the active provider."""
+        if self.provider == "ollama":
+            return self.ollama_base_url
+        if self.provider == "lmstudio":
+            return self.lmstudio_base_url
+        return self.koboldcpp_base_url
+
+    def supports_model_selection(self) -> bool:
+        """Return True if the provider allows choosing between multiple models."""
+        return self.provider in ("ollama", "lmstudio")
 
     def extraction_model_name(self) -> str:
         """Return the model to use for memory extraction."""

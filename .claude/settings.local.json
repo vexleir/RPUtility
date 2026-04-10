@@ -67,7 +67,8 @@
       "Bash(python -c \"from app.core.config import config; print\\('ollama_model:', config.ollama_model\\); print\\('provider:', config.provider\\)\")",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" -X POST http://localhost:11434/api/chat -H \"Content-Type: application/json\" -d \"{\\\\\"model\\\\\":\\\\\"HammerAI/mn-mag-mell-r1:latest\\\\\",\\\\\"messages\\\\\":[{\\\\\"role\\\\\":\\\\\"user\\\\\",\\\\\"content\\\\\":\\\\\"hi\\\\\"}],\\\\\"stream\\\\\":false,\\\\\"options\\\\\":{\\\\\"num_predict\\\\\":5}}\")",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" -X POST http://localhost:11434/api/chat -H \"Content-Type: application/json\" -d \"{\\\\\"model\\\\\":\\\\\"minimax-m2.7:cloud\\\\\",\\\\\"messages\\\\\":[{\\\\\"role\\\\\":\\\\\"user\\\\\",\\\\\"content\\\\\":\\\\\"hi\\\\\"}],\\\\\"stream\\\\\":false,\\\\\"options\\\\\":{\\\\\"num_predict\\\\\":5}}\")",
-      "Bash(curl -s -X POST http://localhost:11434/api/chat -H \"Content-Type: application/json\" -d \"{\\\\\"model\\\\\":\\\\\"hf.co/DavidAU/Fimbulvetr-11B-Ultra-Quality-plus-imatrix-GGUF:latest\\\\\",\\\\\"messages\\\\\":[{\\\\\"role\\\\\":\\\\\"user\\\\\",\\\\\"content\\\\\":\\\\\"hi\\\\\"}],\\\\\"stream\\\\\":false,\\\\\"options\\\\\":{\\\\\"num_predict\\\\\":5}}\")"
+      "Bash(curl -s -X POST http://localhost:11434/api/chat -H \"Content-Type: application/json\" -d \"{\\\\\"model\\\\\":\\\\\"hf.co/DavidAU/Fimbulvetr-11B-Ultra-Quality-plus-imatrix-GGUF:latest\\\\\",\\\\\"messages\\\\\":[{\\\\\"role\\\\\":\\\\\"user\\\\\",\\\\\"content\\\\\":\\\\\"hi\\\\\"}],\\\\\"stream\\\\\":false,\\\\\"options\\\\\":{\\\\\"num_predict\\\\\":5}}\")",
+      "Bash(python -c \"from app.web.server import app; print\\('OK'\\)\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\devio\\.claude\\projects\\c--Antigravity-Projects-RP-Utility\\memory"

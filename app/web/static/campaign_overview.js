@@ -1561,10 +1561,23 @@ async function openEditCampaign() {
   // Populate name & model
   document.getElementById("cs-name").value = _campaign?.name || "";
 
-  // Populate model selects (load models if not yet populated)
+  // Check provider capabilities
+  let supportsModelSelect = true;
+  try {
+    const provRes = await fetch("/api/provider");
+    const provData = await provRes.json();
+    supportsModelSelect = provData.supports_model_selection !== false;
+  } catch {/* assume true */}
+
+  const modelGroup = document.getElementById("cs-model-group");
+  const sumModelGroup = document.getElementById("cs-summary-model-group");
+  if (modelGroup) modelGroup.style.display = supportsModelSelect ? "" : "none";
+  if (sumModelGroup) sumModelGroup.style.display = supportsModelSelect ? "" : "none";
+
+  // Populate model selects (load models if not yet populated and provider supports it)
   const sel = document.getElementById("cs-model");
   const sumSel = document.getElementById("cs-summary-model");
-  if (sel.options.length <= 1) {
+  if (supportsModelSelect && sel.options.length <= 1) {
     try {
       const res = await fetch("/api/models");
       const data = await res.json();

@@ -15,6 +15,7 @@
     <div class="topnav-sub">local-first AI roleplay</div>
     <div class="topnav-status">
       <select id="theme-select" class="theme-select" onchange="setTheme(this.value)" title="Color theme"></select>
+      <button class="btn btn-sm" onclick="openProviderSettings()" title="Provider settings" style="padding:4px 10px;font-size:0.8rem">⚙ Provider</button>
       <div class="status-dot" id="status-dot"></div>
       <span id="status-label" class="muted">Checking…</span>
     </div>
@@ -177,6 +178,64 @@
       <div style="display:flex;gap:10px;margin-top:16px">
         <button class="btn btn-primary" onclick="runImportTemplate()" style="flex:1;justify-content:center">Import →</button>
         <button class="btn" onclick="closeImportTemplateModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Provider Settings Modal ─────────────────────────────────────────── -->
+  <div id="provider-modal" class="modal-backdrop hidden">
+    <div class="modal-box" style="max-width:480px">
+      <button class="modal-close" onclick="closeProviderSettings()">✕</button>
+      <h3 style="margin:0 0 16px">Provider Settings</h3>
+
+      <div class="form-group">
+        <label for="ps-provider">Provider</label>
+        <select id="ps-provider" onchange="onProviderChange()">
+          <option value="ollama">Ollama</option>
+          <option value="lmstudio">LM Studio</option>
+          <option value="koboldcpp">KoboldCPP</option>
+        </select>
+      </div>
+
+      <!-- Ollama fields -->
+      <div id="ps-ollama-fields">
+        <div class="form-group">
+          <label for="ps-ollama-url">Ollama Base URL</label>
+          <input type="text" id="ps-ollama-url" placeholder="http://localhost:11434">
+        </div>
+        <div class="form-group">
+          <label for="ps-ollama-model">Default Model</label>
+          <input type="text" id="ps-ollama-model" placeholder="e.g. llama3.2">
+          <div class="form-hint">Must be pulled in Ollama. Leave blank to keep current.</div>
+        </div>
+      </div>
+
+      <!-- LM Studio fields -->
+      <div id="ps-lmstudio-fields" class="hidden">
+        <div class="form-group">
+          <label for="ps-lmstudio-url">LM Studio Base URL</label>
+          <input type="text" id="ps-lmstudio-url" placeholder="http://localhost:1234">
+        </div>
+        <div class="form-group">
+          <label for="ps-lmstudio-model">Model identifier <span class="dim">(optional)</span></label>
+          <input type="text" id="ps-lmstudio-model" placeholder="Leave blank — LM Studio uses the loaded model">
+        </div>
+      </div>
+
+      <!-- KoboldCPP fields -->
+      <div id="ps-kobold-fields" class="hidden">
+        <div class="form-group">
+          <label for="ps-kobold-url">KoboldCPP Base URL</label>
+          <input type="text" id="ps-kobold-url" placeholder="http://localhost:5001">
+        </div>
+        <p class="dim" style="font-size:13px">KoboldCPP uses whichever model is loaded at startup. No per-request model selection.</p>
+      </div>
+
+      <div id="ps-status" class="dim" style="font-size:13px;min-height:18px;margin-bottom:8px"></div>
+
+      <div style="display:flex;gap:10px;margin-top:4px">
+        <button class="btn btn-primary" onclick="saveProviderSettings()" style="flex:1;justify-content:center" id="ps-save-btn">Save &amp; Reconnect</button>
+        <button class="btn" onclick="closeProviderSettings()">Cancel</button>
       </div>
     </div>
   </div>

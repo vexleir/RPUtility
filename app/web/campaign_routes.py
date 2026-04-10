@@ -45,6 +45,161 @@ log = logging.getLogger("rp_utility")
 
 router = APIRouter(prefix="/api/campaigns", tags=["campaigns"])
 
+# ── Provider-agnostic AI helpers ──────────────────────────────────────────────
+# All campaign routes should use these instead of calling Ollama directly.
+# They dispatch to Ollama, LM Studio, or KoboldCPP based on config.provider.
+
+import httpx as _httpx
+import json as _json_mod
+
+
+def _ai_chat(
+    messages: list[dict],
+    *,
+    model: str = "",
+    temperature: float = 0.8,
+    max_tokens: int = 1024,
+    num_ctx: int = 16384,
+    think: bool = False,
+    extra_ollama_opts: dict | None = None,
+) -> str:
+    """Blocking AI chat call, provider-agnostic."""
+    if config.provider == "ollama":
+        opts: dict = {
+            "temperature": temperature,
+            "num_predict": max_tokens,
+            "num_ctx": num_ctx,
+        }
+        if extra_ollama_opts:
+            opts.update(extra_ollama_opts)
+        payload: dict = {
+            "model": model or config.ollama_model,
+            "messages": messages,
+            "stream": False,
+            "options": opts,
+        }
+        if not think:
+            payload["think"] = False
+        r = _httpx.post(
+            f"{config.ollama_base_url.rstrip('/')}/api/chat",
+            json=payload,
+            timeout=_httpx.Timeout(10.0, read=300.0),
+        )
+        if r.status_code == 404:
+            used = model or config.ollama_model
+            raise RuntimeError(f"Model '{used}' not found in Ollama. Check the model name.")
+        r.raise_for_status()
+        return r.json()["message"]["content"].strip()
+    else:
+        # OpenAI-compat (LM Studio or KoboldCPP)
+        base = config.lmstudio_base_url if config.provider == "lmstudio" else config.koboldcpp_base_url
+        openai_model = config.lmstudio_model if config.provider == "lmstudio" else "koboldcpp"
+        payload = {
+            "model": openai_model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+        r = _httpx.post(
+            f"{base.rstrip('/')}/v1/chat/completions",
+            json=payload,
+            timeout=_httpx.Timeout(10.0, read=300.0),
+        )
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"].strip()
+
+
+def _ai_stream(
+    messages: list[dict],
+    *,
+    model: str = "",
+    temperature: float = 0.8,
+    max_tokens: int = 1024,
+    num_ctx: int = 16384,
+    top_p: float | None = None,
+    top_k: int | None = None,
+    min_p: float | None = None,
+    repeat_penalty: float | None = None,
+    seed: int | None = None,
+):
+    """Streaming AI chat call, provider-agnostic. Yields str chunks."""
+    if config.provider == "ollama":
+        opts: dict = {
+            "temperature": temperature,
+            "num_predict": max_tokens,
+            "num_ctx": num_ctx,
+        }
+        if top_p is not None:       opts["top_p"] = top_p
+        if top_k is not None:       opts["top_k"] = top_k
+        if min_p is not None:       opts["min_p"] = min_p
+        if repeat_penalty is not None: opts["repeat_penalty"] = repeat_penalty
+        if seed is not None and seed >= 0: opts["seed"] = seed
+        payload = {
+            "model": model or config.ollama_model,
+            "messages": messages,
+            "stream": True,
+            "options": opts,
+        }
+        with _httpx.stream(
+            "POST",
+            f"{config.ollama_base_url.rstrip('/')}/api/chat",
+            json=payload,
+            timeout=180.0,
+        ) as response:
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                chunk = _json_mod.loads(line)
+                delta = chunk.get("message", {}).get("content", "")
+                if delta:
+                    yield delta
+                if chunk.get("done"):
+                    break
+    else:
+        # OpenAI-compat (LM Studio or KoboldCPP)
+        base = config.lmstudio_base_url if config.provider == "lmstudio" else config.koboldcpp_base_url
+        openai_model = config.lmstudio_model if config.provider == "lmstudio" else "koboldcpp"
+        payload = {
+            "model": openai_model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        if top_p is not None:
+            payload["top_p"] = top_p
+        if seed is not None and seed >= 0:
+            payload["seed"] = seed
+        with _httpx.stream(
+            "POST",
+            f"{base.rstrip('/')}/v1/chat/completions",
+            json=payload,
+            timeout=180.0,
+        ) as response:
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if not line or line == "data: [DONE]":
+                    continue
+                if line.startswith("data: "):
+                    line = line[6:]
+                try:
+                    chunk = _json_mod.loads(line)
+                    delta = chunk["choices"][0].get("delta", {}).get("content", "")
+                    if delta:
+                        yield delta
+                except (KeyError, IndexError, _json_mod.JSONDecodeError):
+                    continue
+
+
+def _provider_error_msg() -> str:
+    """Human-readable name of the active provider for error messages."""
+    return {"ollama": "Ollama", "lmstudio": "LM Studio", "koboldcpp": "KoboldCPP"}.get(
+        config.provider, config.provider
+    )
+
+
 # ── Store accessors ────────────────────────────────────────────────────────────
 
 def _db() -> str:
@@ -64,8 +219,9 @@ def _npc_relationships():   return NpcRelationshipStore(_db())
 
 def _world_builder() -> WorldBuilder:
     return WorldBuilder(
-        base_url=config.ollama_base_url,
-        model=config.ollama_model,
+        base_url=config.active_base_url(),
+        model=config.active_model(),
+        api_type=config.provider,
     )
 
 # ── Request models ─────────────────────────────────────────────────────────────
@@ -751,38 +907,20 @@ def scene_regenerate_stream(campaign_id: str, scene_id: str, req: SceneRegenerat
     def _stream():
         full_response: list[str] = []
         try:
-            payload = {
-                "model": model,
-                "messages": messages,
-                "stream": True,
-                "options": {
-                    "temperature": temperature,
-                    "top_p": top_p,
-                    "top_k": top_k,
-                    "min_p": min_p,
-                    "repeat_penalty": repeat_penalty,
-                    "num_predict": max_tokens,
-                    "seed": seed,
-                    "num_ctx": gs.context_window,
-                },
-            }
-            with httpx.stream(
-                "POST",
-                f"{config.ollama_base_url.rstrip('/')}/api/chat",
-                json=payload,
-                timeout=180.0,
-            ) as response:
-                response.raise_for_status()
-                for line in response.iter_lines():
-                    if not line:
-                        continue
-                    chunk = _json.loads(line)
-                    delta = chunk.get("message", {}).get("content", "")
-                    if delta:
-                        full_response.append(delta)
-                        yield delta
-                    if chunk.get("done"):
-                        break
+            for delta in _ai_stream(
+                messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                num_ctx=gs.context_window,
+                top_p=top_p,
+                top_k=top_k,
+                min_p=min_p,
+                repeat_penalty=repeat_penalty,
+                seed=seed,
+            ):
+                full_response.append(delta)
+                yield delta
         except Exception as e:
             yield f"\n\n[Error: {e}]"
             return
@@ -974,22 +1112,13 @@ def compress_chronicle_preview(campaign_id: str, req: UpdateChronicleRequest):
     )
 
     try:
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": user_msg},
-            ],
-            "stream": False,
-            "options": {"temperature": 0.2, "num_predict": 600, "num_ctx": ctx_window},
-        }
-        resp = httpx.post(
-            f"{config.ollama_base_url.rstrip('/')}/api/chat",
-            json=payload,
-            timeout=180.0,
+        summary = _ai_chat(
+            [{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
+            model=model,
+            temperature=0.2,
+            max_tokens=600,
+            num_ctx=ctx_window,
         )
-        resp.raise_for_status()
-        summary = resp.json()["message"]["content"].strip()
     except Exception as e:
         raise HTTPException(503, f"AI compression failed: {e}")
 
@@ -1903,60 +2032,30 @@ def generate_image_prompt(campaign_id: str, req: ImagePromptRequest):
     context = "\n".join(p for p in parts if p)
     model = req.model_name or (c.model_name if c.model_name else config.ollama_model)
 
+    import re as _re
     try:
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": _IMG_PROMPT_SYSTEM},
-                {"role": "user", "content": context},
-            ],
-            "stream": False,
-            "think": False,   # Qwen3 / QwQ: suppress chain-of-thought output
-            "options": {"temperature": 0.75, "num_predict": 350},
-        }
-        resp = httpx.post(
-            f"{config.ollama_base_url.rstrip('/')}/api/chat",
-            json=payload,
-            # Short connect timeout (localhost), generous read timeout for slow/cold models
-            timeout=httpx.Timeout(10.0, read=300.0),
+        content = _ai_chat(
+            [{"role": "system", "content": _IMG_PROMPT_SYSTEM}, {"role": "user", "content": context}],
+            model=model,
+            temperature=0.75,
+            max_tokens=350,
         )
-        resp.raise_for_status()
-        import re as _re
-        raw = resp.json()
-        msg = raw.get("message", {})
-        content = (msg.get("content") or "").strip()
         # Strip <think>…</think> blocks (DeepSeek-R1, Qwen3 with tags)
         content = _re.sub(r"<think>.*?</think>", "", content, flags=_re.DOTALL).strip()
-        # Strip plain-text thinking preambles: paragraphs that start with
-        # "Thinking", numbered steps, or bullet reasoning before the actual prompt.
-        # The real SD prompt is comma-separated tags without markdown list markers.
-        # Strategy: take everything after the last blank line that follows a
-        # "step" / heading pattern, or just grab the last non-empty paragraph.
+        # Strip plain-text thinking preambles before comma-separated SD tags
         if _re.search(r"(?m)^(Thinking|#+\s|\d+\.\s+\*\*)", content):
-            # Split on double newlines and take the last non-empty block
             blocks = [b.strip() for b in _re.split(r"\n{2,}", content) if b.strip()]
-            # Prefer the last block that looks like comma-separated tags (no list markers)
             for block in reversed(blocks):
                 if not _re.match(r"^(\d+\.|\*|-|#)", block):
                     content = block
                     break
-        # Some thinking models leave content empty and put the answer in message.thinking
-        prompt_text = content or (msg.get("thinking") or "").strip()
-        if not prompt_text:
+        if not content:
             raise HTTPException(500,
                 "The model returned an empty response. "
-                "Try selecting a different model or ensure the model is fully loaded in Ollama.")
-        return {"prompt": prompt_text}
+                f"Try selecting a different model or ensure the model is fully loaded in {_provider_error_msg()}.")
+        return {"prompt": content}
     except HTTPException:
         raise
-    except httpx.ConnectError:
-        raise HTTPException(503, "Cannot reach Ollama. Is it running?")
-    except httpx.TimeoutException:
-        raise HTTPException(504, (
-            "Prompt generation timed out (model took >5 min). "
-            "This usually means Ollama is loading a large model — wait a moment and try again, "
-            "or select a smaller/faster model."
-        ))
     except Exception as e:
         raise HTTPException(500, f"Prompt generation failed: {e}")
 
@@ -1968,8 +2067,7 @@ def generate_world_stream(req: GenerateWorldRequest):
     """Stream world generation tokens. Client accumulates, then POSTs to /parse."""
     wb = _world_builder()
     if req.model_name:
-        from app.campaigns.world_builder import WorldBuilder
-        wb = WorldBuilder(base_url=config.ollama_base_url, model=req.model_name)
+        wb = WorldBuilder(base_url=config.active_base_url(), model=req.model_name, api_type=config.provider)
 
     def _stream():
         try:
@@ -1986,8 +2084,7 @@ def generate_world(req: GenerateWorldRequest):
     """Blocking world generation. Returns a WorldBuildResult JSON."""
     wb = _world_builder()
     if req.model_name:
-        from app.campaigns.world_builder import WorldBuilder
-        wb = WorldBuilder(base_url=config.ollama_base_url, model=req.model_name)
+        wb = WorldBuilder(base_url=config.active_base_url(), model=req.model_name, api_type=config.provider)
     try:
         result = wb.generate(req.description)
     except RuntimeError as e:
@@ -2000,8 +2097,7 @@ def refine_world(req: RefineWorldRequest):
     """Refine a specific section of a WorldBuildResult."""
     wb = _world_builder()
     if req.model_name:
-        from app.campaigns.world_builder import WorldBuilder
-        wb = WorldBuilder(base_url=config.ollama_base_url, model=req.model_name)
+        wb = WorldBuilder(base_url=config.active_base_url(), model=req.model_name, api_type=config.provider)
     current = _dict_to_world_build_result(req.current)
     try:
         result = wb.refine(current, req.section, req.instructions)
@@ -2013,13 +2109,12 @@ def refine_world(req: RefineWorldRequest):
 @router.post("/world-builder/refine/stream")
 def refine_world_stream(req: RefineWorldRequest):
     """Stream a section refinement. Client accumulates and parses JSON."""
-    import json as _json
-    import httpx
+    import json as _json_inner
     from app.campaigns.world_builder import _REFINE_SYSTEM
 
     model = req.model_name or config.ollama_model
     current = _dict_to_world_build_result(req.current)
-    current_json = _json.dumps(current.model_dump(mode="json"), indent=2, ensure_ascii=False)
+    current_json = _json_inner.dumps(current.model_dump(mode="json"), indent=2, ensure_ascii=False)
 
     prompt = (
         f"Here is the current world document:\n\n"
@@ -2031,32 +2126,14 @@ def refine_world_stream(req: RefineWorldRequest):
 
     def _stream():
         try:
-            payload = {
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": _REFINE_SYSTEM},
-                    {"role": "user", "content": prompt},
-                ],
-                "stream": True,
-                "think": False,
-                "options": {"temperature": 0.75, "num_predict": 4096, "num_ctx": 8192},
-            }
-            with httpx.stream(
-                "POST",
-                f"{config.ollama_base_url.rstrip('/')}/api/chat",
-                json=payload,
-                timeout=180.0,
-            ) as response:
-                response.raise_for_status()
-                for line in response.iter_lines():
-                    if not line:
-                        continue
-                    chunk = _json.loads(line)
-                    delta = chunk.get("message", {}).get("content", "")
-                    if delta:
-                        yield delta
-                    if chunk.get("done"):
-                        break
+            for delta in _ai_stream(
+                [{"role": "system", "content": _REFINE_SYSTEM}, {"role": "user", "content": prompt}],
+                model=model,
+                temperature=0.75,
+                max_tokens=4096,
+                num_ctx=16384,
+            ):
+                yield delta
         except Exception as e:
             yield f"\n\n[ERROR: {e}]"
 
@@ -2073,9 +2150,8 @@ class GenerateFromCardsRequest(BaseModel):
 @router.post("/world-builder/from-cards/stream")
 def generate_from_cards_stream(req: GenerateFromCardsRequest):
     """Stream world synthesis from character cards and lorebook entries."""
-    from app.campaigns.world_builder import WorldBuilder
-    model = req.model_name or config.ollama_model
-    wb = WorldBuilder(base_url=config.ollama_base_url, model=model)
+    model = req.model_name or config.active_model()
+    wb = WorldBuilder(base_url=config.active_base_url(), model=model, api_type=config.provider)
 
     def _stream():
         try:
@@ -2316,38 +2392,20 @@ def scene_open_stream(campaign_id: str, scene_id: str, req: SceneOpenRequest):
     def _stream():
         full_response: list[str] = []
         try:
-            payload = {
-                "model": model,
-                "messages": messages,
-                "stream": True,
-                "options": {
-                    "temperature": temperature,
-                    "top_p": top_p,
-                    "top_k": top_k,
-                    "min_p": min_p,
-                    "repeat_penalty": repeat_penalty,
-                    "num_predict": max_tokens,
-                    "seed": seed,
-                    "num_ctx": gs.context_window,
-                },
-            }
-            with httpx.stream(
-                "POST",
-                f"{config.ollama_base_url.rstrip('/')}/api/chat",
-                json=payload,
-                timeout=180.0,
-            ) as response:
-                response.raise_for_status()
-                for line in response.iter_lines():
-                    if not line:
-                        continue
-                    chunk = _json.loads(line)
-                    delta = chunk.get("message", {}).get("content", "")
-                    if delta:
-                        full_response.append(delta)
-                        yield delta
-                    if chunk.get("done"):
-                        break
+            for delta in _ai_stream(
+                messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                num_ctx=gs.context_window,
+                top_p=top_p,
+                top_k=top_k,
+                min_p=min_p,
+                repeat_penalty=repeat_penalty,
+                seed=seed,
+            ):
+                full_response.append(delta)
+                yield delta
         except Exception as e:
             yield f"\n\n[Error: {e}]"
             return
@@ -2428,38 +2486,20 @@ def scene_chat_stream(campaign_id: str, scene_id: str, req: SceneChatRequest):
     def _stream():
         full_response: list[str] = []
         try:
-            payload = {
-                "model": model,
-                "messages": messages,
-                "stream": True,
-                "options": {
-                    "temperature": temperature,
-                    "top_p": top_p,
-                    "top_k": top_k,
-                    "min_p": min_p,
-                    "repeat_penalty": repeat_penalty,
-                    "num_predict": max_tokens,
-                    "seed": seed,
-                    "num_ctx": gs.context_window,
-                },
-            }
-            with httpx.stream(
-                "POST",
-                f"{config.ollama_base_url.rstrip('/')}/api/chat",
-                json=payload,
-                timeout=180.0,
-            ) as response:
-                response.raise_for_status()
-                for line in response.iter_lines():
-                    if not line:
-                        continue
-                    chunk = _json.loads(line)
-                    delta = chunk.get("message", {}).get("content", "")
-                    if delta:
-                        full_response.append(delta)
-                        yield delta
-                    if chunk.get("done"):
-                        break
+            for delta in _ai_stream(
+                messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                num_ctx=gs.context_window,
+                top_p=top_p,
+                top_k=top_k,
+                min_p=min_p,
+                repeat_penalty=repeat_penalty,
+                seed=seed,
+            ):
+                full_response.append(delta)
+                yield delta
         except Exception as e:
             yield f"\n\n[Error: {e}]"
             return
@@ -2581,30 +2621,17 @@ def suggest_scene_summary(campaign_id: str, scene_id: str, req: SuggestSummaryRe
     model = (req.model_name if req and req.model_name else None) \
             or (getattr(campaign, "summary_model_name", None) if campaign else None) \
             or (campaign.model_name if campaign else None) \
-            or config.ollama_model
+            or config.active_model()
+    ctx_window = campaign.gen_settings.context_window if campaign else config.context_window
 
     def _call(prompt: str) -> str:
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": _SUGGEST_SUMMARY_SYSTEM},
-                {"role": "user", "content": prompt},
-            ],
-            "stream": False,
-            "think": False,
-            "options": {
-                "temperature": 0.1,
-                "num_predict": 1024,
-                "num_ctx": campaign.gen_settings.context_window if campaign else config.context_window,
-            },
-        }
-        r = httpx.post(
-            f"{config.ollama_base_url.rstrip('/')}/api/chat",
-            json=payload,
-            timeout=httpx.Timeout(10.0, read=300.0),
+        raw = _ai_chat(
+            [{"role": "system", "content": _SUGGEST_SUMMARY_SYSTEM}, {"role": "user", "content": prompt}],
+            model=model,
+            temperature=0.1,
+            max_tokens=1024,
+            num_ctx=ctx_window,
         )
-        r.raise_for_status()
-        raw = r.json()["message"]["content"]
         return _re.sub(r"<think>[\s\S]*?</think>", "", raw, flags=_re.IGNORECASE).strip()
 
     # Split into chunks and extract events from each independently
@@ -2634,10 +2661,6 @@ def suggest_scene_summary(campaign_id: str, scene_id: str, req: SuggestSummaryRe
                 line = line.strip()
                 if line and (line.startswith("-") or line.startswith("[")):
                     all_lines.append(line)
-    except httpx.ConnectError:
-        raise HTTPException(503, "Cannot reach Ollama. Is it running?")
-    except httpx.TimeoutException:
-        raise HTTPException(504, "Summary generation timed out. Try a faster model.")
     except Exception as e:
         raise HTTPException(503, f"Summary generation failed: {e}")
 
@@ -2721,33 +2744,19 @@ def suggest_world_updates(campaign_id: str, scene_id: str):
     campaign = _campaigns().get(campaign_id)
     model = (getattr(campaign, "summary_model_name", None) if campaign else None) \
             or (campaign.model_name if campaign else None) \
-            or config.ollama_model
+            or config.active_model()
+    ctx_window = campaign.gen_settings.context_window if campaign else config.context_window
 
     log.info("suggest_world_updates: using model=%s for scene=%s", model, scene_id)
 
     try:
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": _SUGGEST_UPDATES_SYSTEM},
-                {"role": "user", "content": prompt},
-            ],
-            "stream": False,
-            "think": False,
-            "options": {"temperature": 0.5, "num_predict": 8192,
-                        "num_ctx": campaign.gen_settings.context_window if campaign else config.context_window},
-        }
-        r = httpx.post(
-            f"{config.ollama_base_url.rstrip('/')}/api/chat",
-            json=payload,
-            timeout=httpx.Timeout(10.0, read=300.0),
+        raw = _ai_chat(
+            [{"role": "system", "content": _SUGGEST_UPDATES_SYSTEM}, {"role": "user", "content": prompt}],
+            model=model,
+            temperature=0.5,
+            max_tokens=8192,
+            num_ctx=ctx_window,
         )
-        r.raise_for_status()
-        raw = r.json()["message"]["content"].strip()
-    except httpx.ConnectError:
-        raise HTTPException(503, "Cannot reach Ollama. Is it running?")
-    except httpx.TimeoutException:
-        raise HTTPException(504, "World updates generation timed out. Try a faster model.")
     except Exception as e:
         raise HTTPException(503, f"World updates generation failed: {e}")
 

@@ -585,6 +585,93 @@ function showLibraryBanner(type, msg) {
   if (type !== "error") setTimeout(() => { el.innerHTML = ""; }, 4000);
 }
 
+// ── Provider Settings Modal ───────────────────────────────────────────────────
+async function openProviderSettings() {
+  const modal = $("#provider-modal");
+  const status = $("#ps-status");
+  status.textContent = "Loading…";
+  modal.classList.remove("hidden");
+
+  try {
+    const res = await fetch("/api/settings/provider");
+    const data = await res.json();
+
+    $("#ps-provider").value = data.provider;
+    $("#ps-ollama-url").value = data.ollama_base_url;
+    $("#ps-ollama-model").value = data.ollama_model;
+    $("#ps-lmstudio-url").value = data.lmstudio_base_url;
+    $("#ps-lmstudio-model").value = data.lmstudio_model;
+    $("#ps-kobold-url").value = data.koboldcpp_base_url;
+
+    onProviderChange();
+    status.textContent = "";
+  } catch {
+    status.textContent = "Failed to load settings.";
+  }
+}
+
+function closeProviderSettings() {
+  $("#provider-modal").classList.add("hidden");
+}
+
+function onProviderChange() {
+  const p = $("#ps-provider").value;
+  $("#ps-ollama-fields").classList.toggle("hidden", p !== "ollama");
+  $("#ps-lmstudio-fields").classList.toggle("hidden", p !== "lmstudio");
+  $("#ps-kobold-fields").classList.toggle("hidden", p !== "koboldcpp");
+}
+
+async function saveProviderSettings() {
+  const btn = $("#ps-save-btn");
+  const status = $("#ps-status");
+  btn.disabled = true;
+  btn.textContent = "Saving…";
+  status.textContent = "";
+
+  const payload = {
+    provider: $("#ps-provider").value,
+    ollama_base_url: $("#ps-ollama-url").value.trim() || "http://localhost:11434",
+    ollama_model: $("#ps-ollama-model").value.trim(),
+    lmstudio_base_url: $("#ps-lmstudio-url").value.trim() || "http://localhost:1234",
+    lmstudio_model: $("#ps-lmstudio-model").value.trim(),
+    koboldcpp_base_url: $("#ps-kobold-url").value.trim() || "http://localhost:5001",
+  };
+
+  try {
+    const res = await fetch("/api/settings/provider", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Save failed");
+    }
+    const data = await res.json();
+
+    // Update status bar
+    const dot = $("#status-dot");
+    const label = $("#status-label");
+    if (data.available) {
+      dot.className = "status-dot online";
+      label.textContent = `${data.provider} · ${data.default_model}`;
+    } else {
+      dot.className = "status-dot offline";
+      label.textContent = `${data.provider} offline`;
+    }
+
+    // Refresh model list if switching to a multi-model provider
+    if (data.supports_model_selection) await loadModels();
+
+    closeProviderSettings();
+  } catch (err) {
+    status.textContent = `⚠ ${err.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Save & Reconnect";
+  }
+}
+
 // ── Utilities ─────────────────────────────────────────────────────────────────
 function esc(str) {
   return String(str ?? "")

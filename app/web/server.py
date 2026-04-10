@@ -24,7 +24,7 @@ from pydantic import BaseModel
 # Route-level logger — errors will appear in the uvicorn console
 log = logging.getLogger("rp_utility")
 
-from app.core.config import config
+from app.core.config import config, PROJECT_ROOT
 from app.core.engine import RoleplayEngine
 from app.prompting.builder import derive_relationship_summary
 
@@ -32,6 +32,24 @@ from app.prompting.builder import derive_relationship_summary
 
 STATIC_DIR = Path(__file__).parent / "static"
 TEMPLATES_DIR = Path(__file__).parent / "templates"
+_PROVIDER_SETTINGS_FILE = PROJECT_ROOT / "data" / "provider_settings.json"
+
+# ── Provider settings override ────────────────────────────────────────────────
+# Applies a persisted provider_settings.json on top of .env at startup.
+
+def _load_provider_overrides() -> None:
+    """Patch the config singleton with any settings saved via the UI."""
+    if not _PROVIDER_SETTINGS_FILE.exists():
+        return
+    try:
+        data = json.loads(_PROVIDER_SETTINGS_FILE.read_text(encoding="utf-8"))
+        for key, val in data.items():
+            if hasattr(config, key) and val is not None and val != "":
+                setattr(config, key, val)
+    except Exception as exc:
+        log.warning("Could not load provider_settings.json: %s", exc)
+
+_load_provider_overrides()
 
 # ── App setup ─────────────────────────────────────────────────────────────────
 
@@ -592,7 +610,78 @@ def api_provider_status():
         "provider": config.provider,
         "available": engine.provider.is_available(),
         "default_model": config.active_model(),
+        "supports_model_selection": config.supports_model_selection(),
     }
+
+
+# ── API: provider settings ────────────────────────────────────────────────────
+
+class ProviderSettingsRequest(BaseModel):
+    provider: str
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = ""
+    lmstudio_base_url: str = "http://localhost:1234"
+    lmstudio_model: str = ""
+    koboldcpp_base_url: str = "http://localhost:5001"
+
+
+@app.get("/api/settings/provider")
+def api_get_provider_settings():
+    """Return current provider settings for the UI."""
+    return {
+        "provider": config.provider,
+        "ollama_base_url": config.ollama_base_url,
+        "ollama_model": config.ollama_model,
+        "lmstudio_base_url": config.lmstudio_base_url,
+        "lmstudio_model": config.lmstudio_model,
+        "koboldcpp_base_url": config.koboldcpp_base_url,
+    }
+
+
+@app.post("/api/settings/provider")
+def api_save_provider_settings(req: ProviderSettingsRequest):
+    """Persist provider settings and hot-reload the engine."""
+    global _engine
+
+    if req.provider not in ("ollama", "lmstudio", "koboldcpp"):
+        raise HTTPException(status_code=400, detail="Invalid provider")
+
+    # Update the in-memory singleton so all code sees the change immediately
+    config.provider = req.provider  # type: ignore[assignment]
+    config.ollama_base_url = req.ollama_base_url
+    if req.ollama_model:
+        config.ollama_model = req.ollama_model
+    config.lmstudio_base_url = req.lmstudio_base_url
+    if req.lmstudio_model:
+        config.lmstudio_model = req.lmstudio_model
+    config.koboldcpp_base_url = req.koboldcpp_base_url
+
+    # Persist to override file so the settings survive a server restart
+    to_save = {
+        "provider": req.provider,
+        "ollama_base_url": req.ollama_base_url,
+        "lmstudio_base_url": req.lmstudio_base_url,
+        "koboldcpp_base_url": req.koboldcpp_base_url,
+    }
+    if req.ollama_model:
+        to_save["ollama_model"] = req.ollama_model
+    if req.lmstudio_model:
+        to_save["lmstudio_model"] = req.lmstudio_model
+
+    _PROVIDER_SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _PROVIDER_SETTINGS_FILE.write_text(json.dumps(to_save, indent=2), encoding="utf-8")
+
+    # Rebuild the engine with the new provider
+    _engine = RoleplayEngine(config)
+
+    return {
+        "ok": True,
+        "provider": config.provider,
+        "available": _engine.provider.is_available(),
+        "supports_model_selection": config.supports_model_selection(),
+        "default_model": config.active_model(),
+    }
+
 
 
 # ── API: sessions ─────────────────────────────────────────────────────────────

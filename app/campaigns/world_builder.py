@@ -57,31 +57,47 @@ def _ollama_generate(
     max_tokens: int = 4096,
     temperature: float = 0.8,
     num_ctx: int = 16384,
+    api_type: str = "ollama",
 ) -> str:
-    """Simple blocking call to Ollama /api/chat."""
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt},
-        ],
-        "stream": False,
-        "options": {
+    """
+    Blocking chat completion — dispatches to Ollama, LM Studio, or KoboldCPP
+    based on api_type.
+    """
+    messages = [{"role": "system", "content": system}, {"role": "user", "content": prompt}]
+
+    if api_type == "ollama":
+        payload = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_tokens,
+                "num_ctx": num_ctx,
+            },
+        }
+        r = httpx.post(f"{base_url.rstrip('/')}/api/chat", json=payload, timeout=180.0)
+        if r.status_code == 404:
+            raise RuntimeError(
+                f"Model '{model}' not found in Ollama. "
+                f"Check that it is pulled and the name is spelled correctly. "
+                f"(Ollama said: {r.text[:200]})"
+            )
+        r.raise_for_status()
+        return r.json()["message"]["content"].strip()
+    else:
+        # OpenAI-compatible endpoint (LM Studio or KoboldCPP)
+        openai_model = model if api_type == "lmstudio" else "koboldcpp"
+        payload = {
+            "model": openai_model,
+            "messages": messages,
             "temperature": temperature,
-            "num_predict": max_tokens,
-            "num_ctx": num_ctx,
-        },
-    }
-    r = httpx.post(f"{base_url.rstrip('/')}/api/chat", json=payload, timeout=180.0)
-    if r.status_code == 404:
-        body = r.text
-        raise RuntimeError(
-            f"Model '{model}' not found in Ollama. "
-            f"Check that it is pulled and the name is spelled correctly. "
-            f"(Ollama said: {body[:200]})"
-        )
-    r.raise_for_status()
-    return r.json()["message"]["content"].strip()
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+        r = httpx.post(f"{base_url.rstrip('/')}/v1/chat/completions", json=payload, timeout=180.0)
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"].strip()
 
 
 # ── System prompt ─────────────────────────────────────────────────────────────
@@ -182,16 +198,19 @@ _REFINE_SYSTEM = textwrap.dedent("""
 class WorldBuilder:
     """
     Generates and refines campaign world documents using a local LLM.
+    Supports Ollama, LM Studio, and KoboldCPP via api_type.
 
     Usage:
         wb = WorldBuilder(base_url="http://localhost:11434", model="llama3.2")
+        wb = WorldBuilder(base_url="http://localhost:5001", model="koboldcpp", api_type="koboldcpp")
         result = wb.generate("I want to play a wizard in a dark fantasy world")
         result = wb.refine(result, "npcs", "Add a corrupt city guard captain")
     """
 
-    def __init__(self, base_url: str, model: str) -> None:
+    def __init__(self, base_url: str, model: str, api_type: str = "ollama") -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.api_type = api_type  # "ollama" | "lmstudio" | "koboldcpp"
 
     # ── Core generation ───────────────────────────────────────────────────
 
@@ -212,6 +231,7 @@ class WorldBuilder:
             prompt=prompt,
             max_tokens=4096,
             temperature=0.85,
+            api_type=self.api_type,
         )
 
         data = _extract_json(raw)
@@ -254,6 +274,7 @@ class WorldBuilder:
             prompt=prompt,
             max_tokens=4096,
             temperature=0.75,
+            api_type=self.api_type,
         )
 
         data = _extract_json(raw)
@@ -276,41 +297,67 @@ class WorldBuilder:
             f"{player_description.strip()}\n\n"
             f"Generate the complete world document JSON now."
         )
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": _WORLD_BUILD_SYSTEM},
-                {"role": "user", "content": prompt},
-            ],
-            "stream": True,
-            "think": False,          # suppress chain-of-thought for thinking models
-            "options": {
-                "temperature": 0.85,
-                "num_predict": 8192,
-                "num_ctx": 16384,
-            },
-        }
-        try:
-            with httpx.stream(
-                "POST",
-                f"{self.base_url}/api/chat",
-                json=payload,
-                timeout=180.0,
-            ) as response:
-                response.raise_for_status()
-                for line in response.iter_lines():
-                    if not line:
-                        continue
-                    chunk = json.loads(line)
-                    delta = chunk.get("message", {}).get("content", "")
-                    if delta:
-                        yield delta
-                    if chunk.get("done"):
-                        break
-        except httpx.RequestError as e:
-            raise RuntimeError(
-                f"Could not reach Ollama at {self.base_url}. Is Ollama running?"
-            ) from e
+        yield from self._stream_chat(
+            [{"role": "system", "content": _WORLD_BUILD_SYSTEM}, {"role": "user", "content": prompt}],
+            temperature=0.85,
+            max_tokens=8192,
+        )
+
+    def _stream_chat(self, messages: list[dict], *, temperature: float = 0.85,
+                     max_tokens: int = 8192, timeout: float = 180.0):
+        """Internal: stream tokens from whichever provider is configured."""
+        if self.api_type == "ollama":
+            payload = {
+                "model": self.model,
+                "messages": messages,
+                "stream": True,
+                "think": False,
+                "options": {"temperature": temperature, "num_predict": max_tokens, "num_ctx": 16384},
+            }
+            url = f"{self.base_url}/api/chat"
+            try:
+                with httpx.stream("POST", url, json=payload, timeout=timeout) as response:
+                    response.raise_for_status()
+                    for line in response.iter_lines():
+                        if not line:
+                            continue
+                        chunk = json.loads(line)
+                        delta = chunk.get("message", {}).get("content", "")
+                        if delta:
+                            yield delta
+                        if chunk.get("done"):
+                            break
+            except httpx.RequestError as e:
+                raise RuntimeError(f"Could not reach Ollama at {self.base_url}. Is Ollama running?") from e
+        else:
+            # OpenAI-compatible (LM Studio or KoboldCPP)
+            openai_model = self.model if self.api_type == "lmstudio" else "koboldcpp"
+            payload = {
+                "model": openai_model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": True,
+            }
+            url = f"{self.base_url}/v1/chat/completions"
+            try:
+                with httpx.stream("POST", url, json=payload, timeout=timeout) as response:
+                    response.raise_for_status()
+                    for line in response.iter_lines():
+                        if not line or line == "data: [DONE]":
+                            continue
+                        if line.startswith("data: "):
+                            line = line[6:]
+                        try:
+                            chunk = json.loads(line)
+                            delta = chunk["choices"][0].get("delta", {}).get("content", "")
+                            if delta:
+                                yield delta
+                        except (json.JSONDecodeError, KeyError, IndexError):
+                            continue
+            except httpx.RequestError as e:
+                provider = "KoboldCPP" if self.api_type == "koboldcpp" else "LM Studio"
+                raise RuntimeError(f"Could not reach {provider} at {self.base_url}.") from e
 
     def parse_streamed(self, full_text: str) -> WorldBuildResult:
         """Parse the accumulated streaming output into a WorldBuildResult."""
@@ -367,41 +414,12 @@ class WorldBuilder:
         )
         prompt = "\n\n".join(prompt_parts)
 
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": _WORLD_BUILD_SYSTEM},
-                {"role": "user", "content": prompt},
-            ],
-            "stream": True,
-            "think": False,          # suppress chain-of-thought for thinking models
-            "options": {
-                "temperature": 0.80,
-                "num_predict": 8192,
-                "num_ctx": 16384,
-            },
-        }
-        try:
-            with httpx.stream(
-                "POST",
-                f"{self.base_url}/api/chat",
-                json=payload,
-                timeout=240.0,
-            ) as response:
-                response.raise_for_status()
-                for line in response.iter_lines():
-                    if not line:
-                        continue
-                    chunk = json.loads(line)
-                    delta = chunk.get("message", {}).get("content", "")
-                    if delta:
-                        yield delta
-                    if chunk.get("done"):
-                        break
-        except httpx.RequestError as e:
-            raise RuntimeError(
-                f"Could not reach Ollama at {self.base_url}. Is Ollama running?"
-            ) from e
+        yield from self._stream_chat(
+            [{"role": "system", "content": _WORLD_BUILD_SYSTEM}, {"role": "user", "content": prompt}],
+            temperature=0.80,
+            max_tokens=8192,
+            timeout=240.0,
+        )
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────

@@ -30,6 +30,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
 async function loadModels() {
   try {
+    // Check if provider supports model selection first
+    const provRes = await fetch("/api/provider");
+    const provData = await provRes.json();
+    const supportsModelSelect = provData.supports_model_selection !== false;
+
+    const modelGroup = document.getElementById("model-select-group");
+    if (modelGroup) modelGroup.style.display = supportsModelSelect ? "" : "none";
+
+    if (!supportsModelSelect) return;
+
     const res = await fetch("/api/models");
     const data = await res.json();
     const sel = document.getElementById("model-select");
@@ -51,12 +61,15 @@ async function checkStatus() {
     const data = await res.json();
     const dot = document.getElementById("status-dot");
     const lbl = document.getElementById("status-label");
+    const providerLabel = { ollama: "Ollama", lmstudio: "LM Studio", koboldcpp: "KoboldCPP" }[data.provider] || data.provider;
     if (data.available) {
       dot.className = "status-dot online";
-      lbl.textContent = `${data.provider} · ${data.default_model}`;
+      lbl.textContent = data.supports_model_selection !== false
+        ? `${providerLabel} · ${data.default_model}`
+        : `${providerLabel} · model loaded`;
     } else {
       dot.className = "status-dot offline";
-      lbl.textContent = `${data.provider} offline`;
+      lbl.textContent = `${providerLabel} offline`;
     }
   } catch {/* ignore */}
 }
