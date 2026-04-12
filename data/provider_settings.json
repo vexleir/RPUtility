@@ -1,0 +1,8 @@
+{
+  "provider": "ollama",
+  "ollama_base_url": "http://localhost:11434",
+  "lmstudio_base_url": "http://localhost:1234",
+  "koboldcpp_base_url": "http://localhost:5001",
+  "ollama_model": "llama3.2",
+  "lmstudio_model": "local-model"
+}
