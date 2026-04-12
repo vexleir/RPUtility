@@ -359,8 +359,17 @@ async function streamOpeningNarration() {
     _scene.turns.push({ role: "assistant", content: buffer });
 
   } catch (e) {
-    aiDiv.innerHTML = `<span class="error-text">Error: ${escHtml(e.message)}</span>`;
-    showError(e.message);
+    if (buffer) {
+      // Preserve whatever was generated before the interruption
+      finalizeStreamingMessage(aiDiv, buffer);
+      if (!_scene.turns) _scene.turns = [];
+      _scene.turns.push({ role: "assistant", content: buffer });
+    } else if (e.name !== "AbortError") {
+      aiDiv.innerHTML = `<span class="error-text">Error: ${escHtml(e.message)}</span>`;
+      showError(e.message);
+    } else {
+      aiDiv.remove();
+    }
   } finally {
     _streaming = false;
     setSendEnabled(true);
@@ -514,8 +523,16 @@ async function sendMessage() {
     _trackAiResponse(aiDiv, buffer, _scene.turns.length - 1);
 
   } catch (e) {
-    if (e.name === "AbortError") {
-      // User stopped — remove the partial bubble and user message div
+    if (buffer) {
+      // Preserve whatever was generated before the interruption
+      finalizeStreamingMessage(aiDiv, buffer);
+      if (!_scene.turns) _scene.turns = [];
+      _scene.turns.push({ role: "user", content: text });
+      _scene.turns.push({ role: "assistant", content: buffer });
+      _addEditButton(userDiv, "user", _scene.turns.length - 2);
+      _trackAiResponse(aiDiv, buffer, _scene.turns.length - 1);
+    } else if (e.name === "AbortError") {
+      // Nothing generated yet — remove both bubbles
       aiDiv.remove();
       userDiv.remove();
     } else {
@@ -579,7 +596,13 @@ async function continueStory() {
     _trackAiResponse(aiDiv, buffer, _scene.turns.length - 1);
 
   } catch (e) {
-    if (e.name === "AbortError") {
+    if (buffer) {
+      finalizeStreamingMessage(aiDiv, buffer);
+      if (!_scene.turns) _scene.turns = [];
+      _scene.turns.push({ role: "user", content: continueMsg });
+      _scene.turns.push({ role: "assistant", content: buffer });
+      _trackAiResponse(aiDiv, buffer, _scene.turns.length - 1);
+    } else if (e.name === "AbortError") {
       aiDiv.remove();
     } else {
       aiDiv.innerHTML = `<span class="error-text">Error: ${escHtml(e.message)}</span>`;
@@ -1648,11 +1671,9 @@ function stopStreaming() {
   }
 }
 
-// R4.4 — abort active stream on navigation to prevent orphaned DB writes
+// Abort active stream only on actual page unload (tab switches are fine —
+// the browser buffers incoming data and reader.read() resumes on refocus).
 window.addEventListener("beforeunload", () => _streamAbort?.abort());
-document.addEventListener("visibilitychange", () => {
-  if (document.hidden) _streamAbort?.abort();
-});
 
 function scrollToBottom() {
   // Smart scroll: only auto-scroll if the user is already near the bottom.

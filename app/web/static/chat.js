@@ -67,11 +67,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   scrollToBottomForced();
 });
 
-// R4.4 — abort active stream on navigation to prevent orphaned DB writes
+// Abort active stream only on actual page unload (tab switches are fine —
+// the browser buffers incoming data and reader.read() resumes on refocus).
 window.addEventListener("beforeunload", () => _streamAbort?.abort());
-document.addEventListener("visibilitychange", () => {
-  if (document.hidden) _streamAbort?.abort();
-});
 
 // ── Apply pre-fetched session data (R4.3: called with parallel-loaded data) ──
 function applySession(data) {
@@ -240,6 +238,9 @@ async function sendMessage() {
   scrollToBottomForced();
 
   _streamAbort = new AbortController();
+  // Hoisted so the catch block can finalize partial content on interruption
+  let bubble = null;
+  let fullText = "";
   try {
     const res = await fetch(`/api/session/${SESSION_ID}/chat/stream`, {
       method: "POST",
@@ -262,11 +263,10 @@ async function sendMessage() {
     showTyping(false);
 
     // Create the assistant message bubble immediately and stream into it
-    const bubble = appendStreamingMessage();
+    bubble = appendStreamingMessage();
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
-    let fullText = "";
     let scrollPending = false;
 
     const scheduleScroll = () => {
@@ -320,9 +320,16 @@ async function sendMessage() {
 
   } catch (err) {
     showTyping(false);
-    if (err.name !== "AbortError") {
+    if (fullText && bubble) {
+      // Preserve whatever was generated before the interruption
+      finalizeStreamingMessage(bubble, fullText);
+      reloadTurnsQuietly();
+    } else if (err.name !== "AbortError") {
+      bubble?.remove();
       console.error("Chat error:", err);
       showError(err.message);
+    } else {
+      bubble?.remove();
     }
   } finally {
     _streamAbort = null;
