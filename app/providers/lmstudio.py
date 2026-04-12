@@ -57,9 +57,10 @@ class LMStudioProvider(BaseProvider):
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
             "stream": False,
         }
+        if max_tokens > 0:
+            payload["max_tokens"] = max_tokens
         try:
             r = httpx.post(
                 f"{self.base_url}/v1/chat/completions",
@@ -109,15 +110,16 @@ class LMStudioProvider(BaseProvider):
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
             "stream": True,
         }
+        if max_tokens > 0:
+            payload["max_tokens"] = max_tokens
         try:
             with httpx.stream(
                 "POST",
                 f"{self.base_url}/v1/chat/completions",
                 json=payload,
-                timeout=120.0,
+                timeout=httpx.Timeout(30.0, read=600.0),
             ) as response:
                 response.raise_for_status()
                 for line in response.iter_lines():
@@ -158,15 +160,16 @@ class LMStudioProvider(BaseProvider):
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
             "stream": True,
         }
+        if max_tokens > 0:
+            payload["max_tokens"] = max_tokens
         try:
             with httpx.stream(
                 "POST",
                 f"{self.base_url}/v1/chat/completions",
                 json=payload,
-                timeout=120.0,
+                timeout=httpx.Timeout(30.0, read=600.0),
             ) as response:
                 response.raise_for_status()
                 for line in response.iter_lines():

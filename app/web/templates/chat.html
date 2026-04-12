@@ -292,12 +292,12 @@
           <div class="gen-setting-row">
             <div class="gen-setting-label">
               <span>Max Tokens</span>
-              <span class="gen-setting-value" id="lbl-max_tokens">1024</span>
+              <span class="gen-setting-value" id="lbl-max_tokens">2048</span>
             </div>
-            <input type="range" id="sl-max_tokens" min="64" max="8192" step="64" value="1024"
+            <input type="range" id="sl-max_tokens" min="0" max="16384" step="64" value="2048"
               oninput="syncLabel('max_tokens',this.value,0)">
-            <div class="gen-setting-bounds"><span>64</span><span>8192</span></div>
-            <p class="form-hint">Maximum number of tokens the model will generate per response.</p>
+            <div class="gen-setting-bounds"><span>∞ Unlimited</span><span>16384</span></div>
+            <p class="form-hint">Maximum tokens per response. Slide to 0 for no hard limit — the model generates until it naturally finishes. Recommended for verbose 24B+ models.</p>
           </div>
 
           <div class="gen-setting-row">

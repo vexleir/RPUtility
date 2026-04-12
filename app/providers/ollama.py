@@ -59,7 +59,8 @@ class OllamaProvider(BaseProvider):
             "stream": False,
             "options": {
                 "temperature": temperature,
-                "num_predict": max_tokens,
+                # max_tokens <= 0 means unlimited — Ollama uses -1 for that.
+                "num_predict": max_tokens if max_tokens > 0 else -1,
                 "num_ctx": self.num_ctx,
             },
         }
@@ -113,7 +114,7 @@ class OllamaProvider(BaseProvider):
     ) -> Generator[str, None, None]:
         options: dict = {
             "temperature": temperature,
-            "num_predict": max_tokens,
+            "num_predict": max_tokens if max_tokens > 0 else -1,
             "num_ctx": self.num_ctx,
         }
         if top_k is not None:       options["top_k"] = top_k
@@ -132,7 +133,7 @@ class OllamaProvider(BaseProvider):
                 "POST",
                 f"{self.base_url}/api/chat",
                 json=payload,
-                timeout=120.0,
+                timeout=httpx.Timeout(30.0, read=600.0),
             ) as response:
                 response.raise_for_status()
                 for line in response.iter_lines():
@@ -173,7 +174,7 @@ class OllamaProvider(BaseProvider):
             "stream": True,
             "options": {
                 "temperature": temperature,
-                "num_predict": max_tokens,
+                "num_predict": max_tokens if max_tokens > 0 else -1,
                 "num_ctx": self.num_ctx,
             },
         }
@@ -182,7 +183,7 @@ class OllamaProvider(BaseProvider):
                 "POST",
                 f"{self.base_url}/api/chat",
                 json=payload,
-                timeout=120.0,
+                timeout=httpx.Timeout(30.0, read=600.0),
             ) as response:
                 response.raise_for_status()
                 for line in response.iter_lines():

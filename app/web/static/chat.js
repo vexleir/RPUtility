@@ -1364,7 +1364,7 @@ function savePersona() {
 const GEN_SETTINGS_KEY = "rp_gen_settings_" + SESSION_ID;
 const GEN_DEFAULTS = {
   temperature: 0.80, top_p: 0.95, top_k: 0, min_p: 0.05,
-  repeat_penalty: 1.10, max_tokens: 1024, seed: -1,
+  repeat_penalty: 1.10, max_tokens: 2048, seed: -1,
 };
 const COMFY_DEFAULTS = {
   comfyui_url: "http://localhost:8188", checkpoint: "",
@@ -1400,7 +1400,12 @@ function _getGenParams() {
 
 function syncLabel(key, value, decimals) {
   const el = document.getElementById("lbl-" + key);
-  if (el) el.textContent = parseFloat(value).toFixed(decimals);
+  if (!el) return;
+  if (key === "max_tokens" && parseInt(value) <= 0) {
+    el.textContent = "∞ Unlimited";
+  } else {
+    el.textContent = decimals > 0 ? parseFloat(value).toFixed(decimals) : parseInt(value);
+  }
 }
 
 function syncLabelDirect(id, value) {

@@ -336,10 +336,10 @@
           <div class="gen-setting-bounds"><span>1 (off)</span><span>1.5</span></div>
         </div>
         <div class="gen-setting-row">
-          <div class="gen-setting-label"><span>Max Tokens</span><span class="gen-setting-value" id="gs-lbl-max_tokens">1024</span></div>
-          <input type="range" id="gs-max_tokens" min="64" max="8192" step="64" value="1024" oninput="gsSync('max_tokens',this.value,0)">
-          <div class="gen-setting-bounds"><span>64</span><span>8192</span></div>
-          <p class="form-hint">Max tokens per AI response.</p>
+          <div class="gen-setting-label"><span>Max Tokens</span><span class="gen-setting-value" id="gs-lbl-max_tokens">2048</span></div>
+          <input type="range" id="gs-max_tokens" min="0" max="16384" step="64" value="2048" oninput="gsSync('max_tokens',this.value,0)">
+          <div class="gen-setting-bounds"><span>∞ Unlimited</span><span>16384</span></div>
+          <p class="form-hint">Maximum length of each AI response in tokens. Slide to 0 for no hard limit — the model generates until it naturally finishes or the context window fills. Recommended for verbose models like 24B+ that produce long narration.</p>
         </div>
         <div class="gen-setting-row">
           <div class="gen-setting-label"><span>Seed</span><span class="gen-setting-value" id="gs-lbl-seed">-1</span></div>

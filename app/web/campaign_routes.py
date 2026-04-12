@@ -311,7 +311,7 @@ def _ai_chat(
     if config.provider == "ollama":
         opts: dict = {
             "temperature": temperature,
-            "num_predict": max_tokens,
+            "num_predict": max_tokens if max_tokens > 0 else -1,
             "num_ctx": num_ctx,
         }
         if extra_ollama_opts:
@@ -342,9 +342,10 @@ def _ai_chat(
             "model": openai_model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
             "stream": False,
         }
+        if max_tokens > 0:
+            payload["max_tokens"] = max_tokens
         r = _httpx.post(
             f"{base.rstrip('/')}/v1/chat/completions",
             json=payload,
@@ -371,7 +372,9 @@ def _ai_stream(
     if config.provider == "ollama":
         opts: dict = {
             "temperature": temperature,
-            "num_predict": max_tokens,
+            # max_tokens <= 0 means "no hard limit" — pass -1 so Ollama generates
+            # until EOS or the context window is exhausted.
+            "num_predict": max_tokens if max_tokens > 0 else -1,
             "num_ctx": num_ctx,
         }
         if top_p is not None:       opts["top_p"] = top_p
@@ -389,7 +392,7 @@ def _ai_stream(
             "POST",
             f"{config.ollama_base_url.rstrip('/')}/api/chat",
             json=payload,
-            timeout=180.0,
+            timeout=_httpx.Timeout(30.0, read=600.0),
         ) as response:
             response.raise_for_status()
             for line in response.iter_lines():
@@ -409,9 +412,11 @@ def _ai_stream(
             "model": openai_model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
             "stream": True,
         }
+        # max_tokens <= 0 means unlimited — omit the field so the server uses its default.
+        if max_tokens > 0:
+            payload["max_tokens"] = max_tokens
         if top_p is not None:
             payload["top_p"] = top_p
         if seed is not None and seed >= 0:
@@ -420,7 +425,7 @@ def _ai_stream(
             "POST",
             f"{base.rstrip('/')}/v1/chat/completions",
             json=payload,
-            timeout=180.0,
+            timeout=_httpx.Timeout(30.0, read=600.0),
         ) as response:
             response.raise_for_status()
             for line in response.iter_lines():

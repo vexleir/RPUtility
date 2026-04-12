@@ -62,9 +62,10 @@ class KoboldCppProvider(BaseProvider):
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
             "stream": False,
         }
+        if max_tokens > 0:
+            payload["max_tokens"] = max_tokens
         try:
             r = httpx.post(
                 f"{self.base_url}/v1/chat/completions",
@@ -119,9 +120,10 @@ class KoboldCppProvider(BaseProvider):
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
             "stream": True,
         }
+        if max_tokens > 0:
+            payload["max_tokens"] = max_tokens
         if top_p is not None:
             payload["top_p"] = top_p
         if seed is not None and seed >= 0:
@@ -131,7 +133,7 @@ class KoboldCppProvider(BaseProvider):
                 "POST",
                 f"{self.base_url}/v1/chat/completions",
                 json=payload,
-                timeout=120.0,
+                timeout=httpx.Timeout(30.0, read=600.0),
             ) as response:
                 response.raise_for_status()
                 for line in response.iter_lines():

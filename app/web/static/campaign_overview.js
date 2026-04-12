@@ -1560,11 +1560,16 @@ async function runSaveTemplate() {
 
 function csSync(key, value, decimals) {
   const lbl = document.getElementById(`cs-lbl-${key}`);
-  if (lbl) lbl.textContent = decimals > 0 ? parseFloat(value).toFixed(decimals) : value;
+  if (!lbl) return;
+  if (key === "max_tokens" && parseInt(value) <= 0) {
+    lbl.textContent = "∞ Unlimited";
+  } else {
+    lbl.textContent = decimals > 0 ? parseFloat(value).toFixed(decimals) : value;
+  }
 }
 
 function csResetDefaults() {
-  const defaults = { temperature:0.80, top_p:0.95, top_k:0, min_p:0.05, repeat_penalty:1.10, max_tokens:2000, seed:-1, context_window:16384 };
+  const defaults = { temperature:0.80, top_p:0.95, top_k:0, min_p:0.05, repeat_penalty:1.10, max_tokens:2048, seed:-1, context_window:16384 };
   for (const [k, v] of Object.entries(defaults)) {
     const el = document.getElementById(`cs-${k}`);
     if (el) { el.value = v; csSync(k, v, ["temperature","top_p","min_p","repeat_penalty"].includes(k) ? 2 : 0); }
@@ -1610,7 +1615,7 @@ async function openEditCampaign() {
 
   // Populate gen settings sliders
   const gs = _campaign?.gen_settings || {};
-  const defaults = { temperature:0.80, top_p:0.95, top_k:0, min_p:0.05, repeat_penalty:1.10, max_tokens:2000, seed:-1, context_window:16384 };
+  const defaults = { temperature:0.80, top_p:0.95, top_k:0, min_p:0.05, repeat_penalty:1.10, max_tokens:2048, seed:-1, context_window:16384 };
   for (const [k, def] of Object.entries(defaults)) {
     const v = gs[k] ?? def;
     const el = document.getElementById(`cs-${k}`);

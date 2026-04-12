@@ -1791,7 +1791,12 @@ async function saveScratchpad() {
 
 function gsSync(key, value, decimals) {
   const lbl = document.getElementById(`gs-lbl-${key}`);
-  if (lbl) lbl.textContent = decimals > 0 ? parseFloat(value).toFixed(decimals) : value;
+  if (!lbl) return;
+  if (key === "max_tokens" && parseInt(value) <= 0) {
+    lbl.textContent = "∞ Unlimited";
+  } else {
+    lbl.textContent = decimals > 0 ? parseFloat(value).toFixed(decimals) : value;
+  }
 }
 
 function gsGetParams() {
@@ -1808,7 +1813,7 @@ function gsGetParams() {
 
 function gsInitFromCampaign() {
   const gs = _campaign?.gen_settings || {};
-  const defaults = { temperature:0.80, top_p:0.95, top_k:0, min_p:0.05, repeat_penalty:1.10, max_tokens:1024, seed:-1 };
+  const defaults = { temperature:0.80, top_p:0.95, top_k:0, min_p:0.05, repeat_penalty:1.10, max_tokens:2048, seed:-1 };
   for (const [k, def] of Object.entries(defaults)) {
     const v = gs[k] ?? def;
     const el = document.getElementById(`gs-${k}`);
