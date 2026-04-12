@@ -64,7 +64,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   applyStoredBackground();
   loadGenSettings();
   loadPersona();
-  scrollToBottom();
+  scrollToBottomForced();
 });
 
 // R4.4 — abort active stream on navigation to prevent orphaned DB writes
@@ -237,7 +237,7 @@ async function sendMessage() {
   isGenerating = true;
   setInputEnabled(false);
   showTyping(true);
-  scrollToBottom();
+  scrollToBottomForced();
 
   _streamAbort = new AbortController();
   try {
@@ -453,7 +453,7 @@ function showTyping(show) {
   indicator.style.display = show ? "flex" : "none";
   if (show) {
     startElapsedTimer();
-    scrollToBottom();
+    scrollToBottomForced();
   } else {
     stopElapsedTimer();
   }
@@ -912,7 +912,7 @@ async function regenerateResponse(originalMessage) {
   isGenerating = true;
   setInputEnabled(false);
   showTyping(true);
-  scrollToBottom();
+  scrollToBottomForced();
 
   try {
     const res = await fetch(`/api/session/${SESSION_ID}/chat/regenerate`, {
@@ -1245,8 +1245,19 @@ function setupSidebarCollapse() {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function scrollToBottom() {
+  // Smart scroll: only auto-scroll if the user is already near the bottom.
   const area = $("#messages-area");
-  requestAnimationFrame(() => { area.scrollTop = area.scrollHeight; });
+  if (!area) return;
+  requestAnimationFrame(() => {
+    const nearBottom = area.scrollHeight - area.scrollTop - area.clientHeight < 120;
+    if (nearBottom) area.scrollTop = area.scrollHeight;
+  });
+}
+
+function scrollToBottomForced() {
+  // Unconditional scroll — use for page load, new user message, typing indicator, images.
+  const area = $("#messages-area");
+  if (area) requestAnimationFrame(() => { area.scrollTop = area.scrollHeight; });
 }
 
 function setInputEnabled(enabled) {
@@ -1687,7 +1698,7 @@ function _insertGeneratedImage(dataUrl, prompt) {
   div.appendChild(avatarEl);
   div.appendChild(inner);
   area.appendChild(div);
-  scrollToBottom();
+  scrollToBottomForced();
 }
 
 

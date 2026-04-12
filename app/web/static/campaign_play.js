@@ -431,7 +431,7 @@ function renderExistingTurns() {
     const div = appendMessage(t.role, t.content);
     _addEditButton(div, t.role, i);
   });
-  scrollToBottom();
+  scrollToBottomForced();
   updateUndoButton();
 }
 
@@ -471,7 +471,7 @@ async function sendMessage() {
   _clearRegenState();
 
   const userDiv = appendMessage("user", text);
-  scrollToBottom();
+  scrollToBottomForced();
   _streaming = true;
   setSendEnabled(false);
 
@@ -1464,7 +1464,7 @@ function appendDiceRoll(label, rolls, mod, total) {
   const rollStr = rolls.length > 1 ? rolls.join(" + ") : rolls[0];
   div.innerHTML = `<span class="dice-label">🎲 ${escHtml(label)}</span><span class="dice-rolls">${rollStr}${modStr}</span><span class="dice-total">${total}</span>`;
   area.appendChild(div);
-  scrollToBottom();
+  scrollToBottomForced();
 }
 
 // ── Scene search ──────────────────────────────────────────────────────────────
@@ -1655,8 +1655,19 @@ document.addEventListener("visibilitychange", () => {
 });
 
 function scrollToBottom() {
+  // Smart scroll: only auto-scroll if the user is already near the bottom.
+  // This lets the user read earlier content while a response is streaming
+  // without the page jumping back down.
   const area = document.getElementById("messages-area");
-  area.scrollTop = area.scrollHeight;
+  if (!area) return;
+  const nearBottom = area.scrollHeight - area.scrollTop - area.clientHeight < 120;
+  if (nearBottom) area.scrollTop = area.scrollHeight;
+}
+
+function scrollToBottomForced() {
+  // Unconditional scroll — use for page load, new user message, dice, images.
+  const area = document.getElementById("messages-area");
+  if (area) area.scrollTop = area.scrollHeight;
 }
 
 function showError(msg) {
@@ -1858,7 +1869,7 @@ function insertImgGenToChat_impl(dataUrl, prompt) {
   div.appendChild(img);
   div.appendChild(hint);
   area.appendChild(div);
-  scrollToBottom();
+  scrollToBottomForced();
 }
 
 // ── Portrait lightbox ─────────────────────────────────────────────────────────
