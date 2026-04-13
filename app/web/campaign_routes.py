@@ -3379,26 +3379,7 @@ class SuggestSceneRequest(BaseModel):
     model_name: Optional[str] = None
 
 
-_SUGGEST_SCENE_SYSTEM = """You are a scene planner for an ongoing tabletop roleplaying campaign. You will be given the actual world document for this specific campaign — its characters, places, story so far, and active threads. You must suggest the next scene using ONLY what is in that document.
-
-STRICT RULES:
-- Do NOT invent characters, factions, or places that are not in the provided context.
-- Do NOT draw on generic fantasy tropes or any knowledge outside the provided document.
-- Every NPC you include must appear in the [AVAILABLE NPCs] list — use their exact UUID.
-- Every location must come from [KNOWN PLACES] unless no places are listed, in which case you may invent one consistent with the world facts.
-- The scene must directly continue the threads, events, and characters already established.
-
-OUTPUT: A single JSON object with exactly these keys:
-{
-  "title": "Scene title using names/places from the world document",
-  "location": "Location name from the world document",
-  "npc_ids": ["exact-uuid-from-the-list"],
-  "intent": "1-2 sentences: what this scene accomplishes for THIS story",
-  "tone": "mood/atmosphere keywords",
-  "reasoning": "Which specific story thread or character arc this scene advances, and why now"
-}
-
-Output ONLY the JSON object. No preamble."""
+_SUGGEST_SCENE_SYSTEM = ""  # not used — single-message sandwich pattern below
 
 
 @router.post("/{campaign_id}/suggest-scene")
@@ -3462,24 +3443,54 @@ def suggest_scene(campaign_id: str, req: SuggestSceneRequest):
         f_lines = "\n".join(f"- {f.content}" for f in key_facts)
         parts.append(f"[KEY WORLD FACTS]\n{f_lines}")
 
+    campaign_name = campaign.name if campaign else "this campaign"
     context_body = "\n\n".join(parts)
+
     if context_body:
+        hint_line = (f"\nPlayer hint for this scene: {req.hint.strip()}" if req.hint.strip() else "")
+        # Sandwich pattern: task instruction → world context → task instruction repeated.
+        # Local models weight the user message heavily; repeating the constraint at the
+        # bottom prevents the model from drifting into generic fantasy territory.
         user_prompt = (
-            "Below is the complete world document for this campaign. "
-            "Suggest the next scene using ONLY the characters, places, and story threads listed here. "
-            + (f"Player hint: {req.hint.strip()}\n\n" if req.hint.strip() else "")
+            f"You are planning the next scene for a tabletop RPG campaign called \"{campaign_name}\".\n"
+            f"Use ONLY the characters, places, and story threads listed in the world document below.\n"
+            f"Do NOT invent new characters, factions, or locations. Do NOT use generic fantasy tropes.\n"
+            f"Every NPC you include must appear in [AVAILABLE NPCs] — use their exact UUID as shown.\n"
+            f"Every location must come from [KNOWN PLACES].\n"
+            f"{hint_line}\n\n"
+            "=== WORLD DOCUMENT FOR THIS CAMPAIGN ===\n\n"
             + context_body
+            + "\n\n=== END OF WORLD DOCUMENT ===\n\n"
+            f"Now, based ONLY on the campaign \"{campaign_name}\" described above — "
+            "not any other story, setting, or fictional world — "
+            "output a JSON scene suggestion.\n"
+            "Use ONLY the NPC UUIDs and place names from the lists above.\n\n"
+            "Output format (JSON only, no prose before or after):\n"
+            "{\n"
+            '  "title": "Scene title using names/places from the world document above",\n'
+            '  "location": "A location name from [KNOWN PLACES] above",\n'
+            '  "npc_ids": ["exact-uuid-from-AVAILABLE-NPCs-above"],\n'
+            '  "intent": "1-2 sentences: what this scene accomplishes for THIS specific story",\n'
+            '  "tone": "mood/atmosphere keywords",\n'
+            '  "reasoning": "Which specific thread or character from the world document this advances, and why now"\n'
+            "}"
         )
     else:
+        hint_line = (f"\nPlayer hint: {req.hint.strip()}" if req.hint.strip() else "")
         user_prompt = (
-            "No world context has been established yet. Suggest a compelling opening scene. "
-            + (f"Player hint: {req.hint.strip()}" if req.hint.strip() else "")
+            f"You are starting the first scene for a tabletop RPG campaign called \"{campaign_name}\".\n"
+            "No world context has been established yet.\n"
+            f"{hint_line}\n\n"
+            "Output a JSON object with keys: title, location, npc_ids (empty list), intent, tone, reasoning.\n"
+            "JSON only, no prose."
         )
 
-    # Assistant prefill forces the model to begin its response with `{`
-    # so it cannot open with prose before the JSON object.
+    # Minimal system message suppresses the "Hello! How can I help?" greeting
+    # that models emit when there is no system message at all.
+    # The actual grounding work is done in the user message (sandwich pattern).
+    # Assistant prefill forces the response to start with `{`.
     messages = [
-        {"role": "system",    "content": _SUGGEST_SCENE_SYSTEM},
+        {"role": "system",    "content": "You output only raw JSON. No greetings, no explanations, no markdown fences. Only the JSON object."},
         {"role": "user",      "content": user_prompt},
         {"role": "assistant", "content": "{"},
     ]
