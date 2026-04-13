@@ -3379,26 +3379,26 @@ class SuggestSceneRequest(BaseModel):
     model_name: Optional[str] = None
 
 
-_SUGGEST_SCENE_SYSTEM = """You are a creative director for a tabletop roleplaying game. Your job is to design a compelling next scene that naturally continues the story.
+_SUGGEST_SCENE_SYSTEM = """You are a scene planner for an ongoing tabletop roleplaying campaign. You will be given the actual world document for this specific campaign — its characters, places, story so far, and active threads. You must suggest the next scene using ONLY what is in that document.
+
+STRICT RULES:
+- Do NOT invent characters, factions, or places that are not in the provided context.
+- Do NOT draw on generic fantasy tropes or any knowledge outside the provided document.
+- Every NPC you include must appear in the [AVAILABLE NPCs] list — use their exact UUID.
+- Every location must come from [KNOWN PLACES] unless no places are listed, in which case you may invent one consistent with the world facts.
+- The scene must directly continue the threads, events, and characters already established.
 
 OUTPUT: A single JSON object with exactly these keys:
 {
-  "title": "Evocative scene title",
-  "location": "Specific location name or description",
-  "npc_ids": ["exact-uuid", "exact-uuid"],
-  "intent": "1-2 sentences: what this scene should accomplish narratively",
-  "tone": "mood/atmosphere keywords (e.g. tense, melancholy, hopeful)",
-  "reasoning": "Brief explanation of why this scene fits the story now"
+  "title": "Scene title using names/places from the world document",
+  "location": "Location name from the world document",
+  "npc_ids": ["exact-uuid-from-the-list"],
+  "intent": "1-2 sentences: what this scene accomplishes for THIS story",
+  "tone": "mood/atmosphere keywords",
+  "reasoning": "Which specific story thread or character arc this scene advances, and why now"
 }
 
-Rules:
-- Only use NPC IDs from the provided list. Match by name if the hint references one.
-- The scene must respect established world facts and active threads.
-- Prefer locations from the established places list, but may invent new ones if dramatically appropriate.
-- If hint is blank or "surprise me", pick the most dramatically appropriate next moment.
-- Keep intent focused — one clear goal per scene.
-
-Output ONLY the JSON object. No preamble, no explanation outside the JSON."""
+Output ONLY the JSON object. No preamble."""
 
 
 @router.post("/{campaign_id}/suggest-scene")
@@ -3462,7 +3462,19 @@ def suggest_scene(campaign_id: str, req: SuggestSceneRequest):
         f_lines = "\n".join(f"- {f.content}" for f in key_facts)
         parts.append(f"[KEY WORLD FACTS]\n{f_lines}")
 
-    user_prompt = "\n\n".join(parts) or "No world context established yet. Suggest an opening scene."
+    context_body = "\n\n".join(parts)
+    if context_body:
+        user_prompt = (
+            "Below is the complete world document for this campaign. "
+            "Suggest the next scene using ONLY the characters, places, and story threads listed here. "
+            + (f"Player hint: {req.hint.strip()}\n\n" if req.hint.strip() else "")
+            + context_body
+        )
+    else:
+        user_prompt = (
+            "No world context has been established yet. Suggest a compelling opening scene. "
+            + (f"Player hint: {req.hint.strip()}" if req.hint.strip() else "")
+        )
 
     # Assistant prefill forces the model to begin its response with `{`
     # so it cannot open with prose before the JSON object.
@@ -3473,7 +3485,7 @@ def suggest_scene(campaign_id: str, req: SuggestSceneRequest):
     ]
 
     try:
-        raw = _ai_chat(messages, model=model, temperature=0.7, max_tokens=512, num_ctx=8192)
+        raw = _ai_chat(messages, model=model, temperature=0.4, max_tokens=512, num_ctx=8192)
     except Exception as e:
         raise HTTPException(503, f"AI unavailable: {e}")
 
