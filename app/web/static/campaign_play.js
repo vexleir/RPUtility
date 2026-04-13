@@ -1906,6 +1906,89 @@ function openPortraitLightbox(src, name) {
   document.getElementById("portrait-lightbox").classList.remove("hidden");
 }
 
+// ── Suggest Scene ─────────────────────────────────────────────────────────────
+
+let _suggestedScene = null;   // last suggestion from the AI
+
+async function runSuggestScene() {
+  const btn      = document.getElementById("suggest-scene-btn");
+  const statusEl = document.getElementById("suggest-scene-status");
+  const resultEl = document.getElementById("suggest-scene-result");
+
+  btn.disabled = true;
+  btn.textContent = "Thinking…";
+  statusEl.textContent = "Analysing story context…";
+  resultEl.style.display = "none";
+  _suggestedScene = null;
+
+  const hint = (document.getElementById("suggest-scene-hint").value || "").trim();
+
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/suggest-scene`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hint }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `Server error ${res.status}`);
+    }
+    const data = await res.json();
+
+    // Always log the raw AI response so it's visible in DevTools if needed
+    if (data._raw) console.debug("[suggest-scene] raw AI response:", data._raw);
+
+    if (!data._parse_ok) {
+      const preview = data._raw ? data._raw.slice(0, 200) : "no response";
+      statusEl.textContent = `⚠ AI didn't return usable JSON. Raw response logged to console. Preview: ${preview}`;
+      return;
+    }
+
+    _suggestedScene = data;
+    statusEl.textContent = "";
+
+    // Show reasoning
+    const reasoningEl = document.getElementById("suggest-scene-reasoning");
+    const parts = [];
+    if (data.reasoning) parts.push(`💡 ${data.reasoning}`);
+    if (data.tone)      parts.push(`Tone: ${data.tone}`);
+    if (data.npc_names?.length) parts.push(`NPCs: ${data.npc_names.join(", ")}`);
+    reasoningEl.textContent = parts.join(" · ");
+
+    resultEl.style.display = "";
+    statusEl.textContent = `Suggested: "${data.title || data.location || "a scene"}" — review below then click Apply.`;
+
+  } catch (e) {
+    statusEl.textContent = `Error: ${e.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "✨ Suggest";
+  }
+}
+
+function applySuggestedScene() {
+  if (!_suggestedScene) return;
+  const s = _suggestedScene;
+
+  if (s.title)    document.getElementById("setup-title").value  = s.title;
+  if (s.location) document.getElementById("setup-location").value = s.location;
+  if (s.intent)   document.getElementById("setup-intent").value = s.intent;
+  if (s.tone)     document.getElementById("setup-tone").value   = s.tone;
+
+  // Check matching NPC boxes
+  if (s.npc_ids?.length) {
+    document.querySelectorAll("#npc-checkboxes input[type=checkbox]").forEach(cb => {
+      if (s.npc_ids.includes(cb.value)) cb.checked = true;
+    });
+  }
+
+  // Close the quickadd details panel
+  const details = document.getElementById("qa-suggest-scene");
+  if (details) details.removeAttribute("open");
+
+  document.getElementById("suggest-scene-status").textContent = "✓ Applied to form.";
+}
+
 // ── Utility ───────────────────────────────────────────────────────────────────
 
 function escHtml(str) {

@@ -3370,3 +3370,287 @@ def _chronicle_dict(e) -> dict:
         "confirmed": e.confirmed,
         "created_at": e.created_at.isoformat(),
     }
+
+
+# ── Suggest Scene ─────────────────────────────────────────────────────────────
+
+class SuggestSceneRequest(BaseModel):
+    hint: str = ""
+    model_name: Optional[str] = None
+
+
+_SUGGEST_SCENE_SYSTEM = """You are a creative director for a tabletop roleplaying game. Your job is to design a compelling next scene that naturally continues the story.
+
+OUTPUT: A single JSON object with exactly these keys:
+{
+  "title": "Evocative scene title",
+  "location": "Specific location name or description",
+  "npc_ids": ["exact-uuid", "exact-uuid"],
+  "intent": "1-2 sentences: what this scene should accomplish narratively",
+  "tone": "mood/atmosphere keywords (e.g. tense, melancholy, hopeful)",
+  "reasoning": "Brief explanation of why this scene fits the story now"
+}
+
+Rules:
+- Only use NPC IDs from the provided list. Match by name if the hint references one.
+- The scene must respect established world facts and active threads.
+- Prefer locations from the established places list, but may invent new ones if dramatically appropriate.
+- If hint is blank or "surprise me", pick the most dramatically appropriate next moment.
+- Keep intent focused — one clear goal per scene.
+
+Output ONLY the JSON object. No preamble, no explanation outside the JSON."""
+
+
+@router.post("/{campaign_id}/suggest-scene")
+def suggest_scene(campaign_id: str, req: SuggestSceneRequest):
+    """Use the AI to suggest a compelling next scene based on world context."""
+    from app.campaigns.world_builder import _extract_json
+    _require_campaign(campaign_id)
+
+    campaign = _campaigns().get(campaign_id)
+    model = req.model_name or (campaign.model_name if campaign else None) or config.ollama_model
+
+    npcs      = _npcs().get_all(campaign_id)
+    threads   = _threads().get_all(campaign_id)
+    facts     = _facts().get_all(campaign_id)
+    places    = _places().get_all(campaign_id)
+    chronicle = _chronicle().get_all(campaign_id)
+    scenes    = _scenes().get_all(campaign_id)
+
+    # Build context sections
+    parts: list[str] = []
+
+    if req.hint.strip():
+        parts.append(f"[PLAYER HINT]\n{req.hint.strip()}")
+
+    confirmed = [s for s in scenes if s.confirmed and s.confirmed_summary]
+    if confirmed:
+        last = confirmed[-1]
+        parts.append(f"[LAST SCENE — Scene {last.scene_number}]\n{last.confirmed_summary}")
+
+    recent_chron = [e for e in chronicle if e.confirmed][-5:]
+    if recent_chron:
+        chron_lines = "\n\n".join(
+            f"[Scenes {e.scene_range_start}–{e.scene_range_end}] {e.content}"
+            for e in recent_chron
+        )
+        parts.append(f"[STORY SO FAR]\n{chron_lines}")
+
+    active_threads = [t for t in threads if t.status == ThreadStatus.ACTIVE]
+    if active_threads:
+        t_lines = "\n".join(
+            f"- [{t.id}] {t.title}: {t.description}" for t in active_threads
+        )
+        parts.append(f"[ACTIVE NARRATIVE THREADS]\n{t_lines}")
+
+    alive_npcs = [n for n in npcs if n.is_alive]
+    if alive_npcs:
+        n_lines = "\n".join(
+            f"- [{n.id}] {n.name} ({n.role or 'NPC'})"
+            + (f", {n.current_location}" if n.current_location else "")
+            + (f" — {n.current_state}" if n.current_state else "")
+            for n in alive_npcs
+        )
+        parts.append(f"[AVAILABLE NPCs]\n{n_lines}")
+
+    if places:
+        p_lines = "\n".join(f"- {p.name}: {p.description}" for p in places[:20])
+        parts.append(f"[KNOWN PLACES]\n{p_lines}")
+
+    key_facts = [f for f in facts if f.priority in ("critical", "normal")][:30]
+    if key_facts:
+        f_lines = "\n".join(f"- {f.content}" for f in key_facts)
+        parts.append(f"[KEY WORLD FACTS]\n{f_lines}")
+
+    user_prompt = "\n\n".join(parts) or "No world context established yet. Suggest an opening scene."
+
+    # Assistant prefill forces the model to begin its response with `{`
+    # so it cannot open with prose before the JSON object.
+    messages = [
+        {"role": "system",    "content": _SUGGEST_SCENE_SYSTEM},
+        {"role": "user",      "content": user_prompt},
+        {"role": "assistant", "content": "{"},
+    ]
+
+    try:
+        raw = _ai_chat(messages, model=model, temperature=0.7, max_tokens=512, num_ctx=8192)
+    except Exception as e:
+        raise HTTPException(503, f"AI unavailable: {e}")
+
+    # Ollama does not echo the prefill back; LM Studio sometimes does.
+    # Either way, reconstruct the full JSON by prepending the `{` we sent.
+    raw_full = raw if raw.lstrip().startswith("{") else "{" + raw
+
+    data = _extract_json(raw_full)
+    # Accept any valid dict — even partial. "title" or "location" is enough.
+    parse_ok = bool(data and ("title" in data or "location" in data or "intent" in data))
+
+    npc_map = {n.id: n.name for n in alive_npcs}
+    suggested_npc_ids = data.get("npc_ids", []) if data else []
+    valid_npc_ids = [nid for nid in suggested_npc_ids if nid in npc_map]
+
+    return {
+        "title":     data.get("title", "")     if data else "",
+        "location":  data.get("location", "")  if data else "",
+        "npc_ids":   valid_npc_ids,
+        "npc_names": [npc_map[nid] for nid in valid_npc_ids],
+        "intent":    data.get("intent", "")    if data else "",
+        "tone":      data.get("tone", "")      if data else "",
+        "reasoning": data.get("reasoning", "") if data else "",
+        "_parse_ok": parse_ok,
+        "_raw":      raw_full,   # always returned so the frontend can log it
+    }
+
+
+# ── God Prompt ────────────────────────────────────────────────────────────────
+
+class GodPromptRequest(BaseModel):
+    instruction: str
+    model_name: Optional[str] = None
+
+
+_GOD_PROMPT_SYSTEM = """You are a world-state editor for a tabletop roleplaying game campaign. The GM gives you a natural-language instruction and you output a JSON object describing exactly what to change in the world document.
+
+RULES:
+- Match existing entities by their exact UUID shown in the context lists below.
+- For NPC field updates, valid fields: current_state, current_location, relationship_to_player, personality, secrets, short_term_goal, long_term_goal, status_reason.
+- Make only the changes that are clearly requested or logically implied. Do not over-reach.
+- If an entity doesn't exist yet, use the create_ arrays. If it exists, use update_. Use delete_ only if explicitly requested.
+- Every entry must include a brief "reason" explaining the change.
+
+OUTPUT: A single JSON object with exactly these keys (use [] or "" for anything not needed):
+{
+  "update_npcs": [
+    {"npc_id": "exact-uuid", "npc_name": "...", "field": "current_state", "new_value": "...", "reason": "..."}
+  ],
+  "create_npcs": [
+    {"name": "...", "role": "...", "appearance": "...", "personality": "...", "relationship_to_player": "...", "current_state": "...", "short_term_goal": "...", "secrets": "...", "reason": "..."}
+  ],
+  "delete_npcs": [
+    {"npc_id": "exact-uuid", "npc_name": "...", "reason": "..."}
+  ],
+  "create_facts": [
+    {"content": "...", "reason": "..."}
+  ],
+  "update_facts": [
+    {"fact_id": "exact-uuid", "old_content": "...", "new_content": "...", "reason": "..."}
+  ],
+  "delete_facts": [
+    {"fact_id": "exact-uuid", "content": "...", "reason": "..."}
+  ],
+  "create_threads": [
+    {"title": "...", "description": "...", "reason": "..."}
+  ],
+  "update_threads": [
+    {"thread_id": "exact-uuid", "title": "...", "new_status": "active|dormant|resolved", "description": "...", "resolution": "...", "reason": "..."}
+  ],
+  "delete_threads": [
+    {"thread_id": "exact-uuid", "title": "...", "reason": "..."}
+  ],
+  "create_places": [
+    {"name": "...", "description": "...", "current_state": "...", "reason": "..."}
+  ],
+  "update_places": [
+    {"place_id": "exact-uuid", "name": "...", "field": "description|current_state", "new_value": "...", "reason": "..."}
+  ],
+  "create_factions": [
+    {"name": "...", "description": "...", "goals": "...", "standing_with_player": "...", "reason": "..."}
+  ],
+  "update_factions": [
+    {"faction_id": "exact-uuid", "name": "...", "field": "description|goals|standing_with_player|relationship_notes", "new_value": "...", "reason": "..."}
+  ],
+  "narrative_note": "One sentence summarising what was changed and why."
+}
+
+Output ONLY the JSON object. No preamble, no explanation outside the JSON."""
+
+
+@router.post("/{campaign_id}/god-prompt")
+def run_god_prompt(campaign_id: str, req: GodPromptRequest):
+    """Apply a natural-language GM instruction to the world state via AI."""
+    from app.campaigns.world_builder import _extract_json
+    _require_campaign(campaign_id)
+
+    if not req.instruction.strip():
+        raise HTTPException(400, "Instruction cannot be empty.")
+
+    campaign  = _campaigns().get(campaign_id)
+    model = req.model_name or (campaign.model_name if campaign else None) or config.ollama_model
+
+    npcs      = _npcs().get_all(campaign_id)
+    facts     = _facts().get_all(campaign_id)
+    threads   = _threads().get_all(campaign_id)
+    places    = _places().get_all(campaign_id)
+    factions  = _factions().get_all(campaign_id)
+
+    parts: list[str] = [f"[GM INSTRUCTION]\n{req.instruction.strip()}"]
+
+    if npcs:
+        n_lines = "\n".join(
+            f"- [{n.id}] {n.name} ({n.role or 'NPC'})"
+            + (f", alive={n.is_alive}")
+            + (f", state: {n.current_state}" if n.current_state else "")
+            + (f", location: {n.current_location}" if n.current_location else "")
+            for n in npcs
+        )
+        parts.append(f"[CURRENT NPCs]\n{n_lines}")
+
+    if facts:
+        f_lines = "\n".join(f"- [{f.id}] {f.content}" for f in facts)
+        parts.append(f"[WORLD FACTS]\n{f_lines}")
+
+    if threads:
+        t_lines = "\n".join(
+            f"- [{t.id}] {t.title} ({t.status.value}): {t.description}" for t in threads
+        )
+        parts.append(f"[NARRATIVE THREADS]\n{t_lines}")
+
+    if places:
+        p_lines = "\n".join(
+            f"- [{p.id}] {p.name}: {p.description}"
+            + (f" [{p.current_state}]" if p.current_state else "")
+            for p in places
+        )
+        parts.append(f"[PLACES]\n{p_lines}")
+
+    if factions:
+        fac_lines = "\n".join(
+            f"- [{f.id}] {f.name}: {f.description}" for f in factions
+        )
+        parts.append(f"[FACTIONS]\n{fac_lines}")
+
+    user_prompt = "\n\n".join(parts)
+
+    try:
+        raw = _ai_chat(
+            [{"role": "system", "content": _GOD_PROMPT_SYSTEM},
+             {"role": "user",   "content": user_prompt}],
+            model=model,
+            temperature=0.4,
+            max_tokens=2048,
+            num_ctx=16384,
+        )
+    except Exception as e:
+        raise HTTPException(503, f"AI unavailable: {e}")
+
+    data = _extract_json(raw)
+    parse_ok = bool(data)
+
+    return {
+        "update_npcs":     data.get("update_npcs",     []) if parse_ok else [],
+        "create_npcs":     data.get("create_npcs",     []) if parse_ok else [],
+        "delete_npcs":     data.get("delete_npcs",     []) if parse_ok else [],
+        "create_facts":    data.get("create_facts",    []) if parse_ok else [],
+        "update_facts":    data.get("update_facts",    []) if parse_ok else [],
+        "delete_facts":    data.get("delete_facts",    []) if parse_ok else [],
+        "create_threads":  data.get("create_threads",  []) if parse_ok else [],
+        "update_threads":  data.get("update_threads",  []) if parse_ok else [],
+        "delete_threads":  data.get("delete_threads",  []) if parse_ok else [],
+        "create_places":   data.get("create_places",   []) if parse_ok else [],
+        "update_places":   data.get("update_places",   []) if parse_ok else [],
+        "create_factions": data.get("create_factions", []) if parse_ok else [],
+        "update_factions": data.get("update_factions", []) if parse_ok else [],
+        "narrative_note":  data.get("narrative_note",  "") if parse_ok else "",
+        "_parse_ok": parse_ok,
+        "_raw": raw if not parse_ok else "",
+    }

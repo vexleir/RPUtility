@@ -131,6 +131,27 @@
         </div>
       </details>
 
+      <!-- ── AI Scene Suggestion ─────────────────────────────────── -->
+      <details class="scene-quickadd" id="qa-suggest-scene">
+        <summary class="scene-quickadd-summary">✨ Suggest Scene with AI</summary>
+        <div class="scene-quickadd-body">
+          <p class="muted" style="font-size:0.85rem;margin-bottom:8px">Describe what you'd like to happen next, or leave blank and let the AI decide based on the story so far.</p>
+          <div style="display:flex;gap:6px">
+            <textarea class="wb-field" id="suggest-scene-hint" rows="2"
+              placeholder="e.g. 'I want a tense confrontation with the guild master' or leave blank for a surprise…"
+              style="flex:1"></textarea>
+            <button class="btn btn-sm btn-primary" id="suggest-scene-btn" onclick="runSuggestScene()" style="align-self:flex-end;white-space:nowrap">✨ Suggest</button>
+          </div>
+          <span id="suggest-scene-status" class="muted" style="font-size:0.8rem;display:block;margin-top:4px"></span>
+          <div id="suggest-scene-result" style="display:none;margin-top:10px;padding:10px;background:var(--surface2,var(--bg-alt));border-radius:6px;border:1px solid var(--border)">
+            <div style="font-size:0.78rem;color:var(--text-dim);margin-bottom:6px" id="suggest-scene-reasoning"></div>
+            <div style="display:flex;gap:8px;justify-content:flex-end">
+              <button class="btn btn-sm btn-primary" onclick="applySuggestedScene()">Apply to Form ↓</button>
+            </div>
+          </div>
+        </div>
+      </details>
+
       <div style="display:flex;gap:12px;margin-top:16px">
         <button class="btn btn-primary" onclick="beginScene()" style="flex:1;justify-content:center">Begin Scene →</button>
         <a id="cancel-setup-link" href="/" class="btn" style="text-decoration:none">Cancel</a>

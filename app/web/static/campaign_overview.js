@@ -1917,3 +1917,306 @@ function confirmImportCard() {
   closeModal("import-card-modal");
   openEditNpc(null, resolved, _importCardPortrait);
 }
+
+// ── God Prompt ────────────────────────────────────────────────────────────────
+
+let _godPromptResult = null;
+
+function openGodPrompt() {
+  resetGodPrompt();
+  openModal("god-prompt-modal");
+}
+
+function resetGodPrompt() {
+  _godPromptResult = null;
+  document.getElementById("god-prompt-instruction").value = "";
+  document.getElementById("god-prompt-status").textContent = "";
+  document.getElementById("god-prompt-suggestions").style.display = "none";
+  document.getElementById("god-prompt-suggestions").innerHTML = "";
+  document.getElementById("god-prompt-footer").style.display = "none";
+  document.getElementById("god-prompt-input-area").style.display = "";
+  document.getElementById("god-prompt-run-btn").disabled = false;
+  document.getElementById("god-prompt-run-btn").textContent = "⚡ Run";
+}
+
+async function runGodPrompt() {
+  const instruction = document.getElementById("god-prompt-instruction").value.trim();
+  if (!instruction) {
+    document.getElementById("god-prompt-status").textContent = "Please enter an instruction.";
+    return;
+  }
+
+  const btn      = document.getElementById("god-prompt-run-btn");
+  const statusEl = document.getElementById("god-prompt-status");
+  btn.disabled = true;
+  btn.textContent = "Thinking…";
+  statusEl.textContent = "Analysing world state…";
+
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/god-prompt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ instruction }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `Server error ${res.status}`);
+    }
+    const data = await res.json();
+
+    if (!data._parse_ok) {
+      statusEl.textContent = "⚠ AI returned an unexpected response. Try rephrasing your instruction.";
+      btn.disabled = false;
+      btn.textContent = "⚡ Run";
+      return;
+    }
+
+    _godPromptResult = data;
+    statusEl.textContent = data.narrative_note ? `AI note: ${data.narrative_note}` : "";
+
+    const totalChanges =
+      (data.update_npcs?.length || 0) + (data.create_npcs?.length || 0) + (data.delete_npcs?.length || 0) +
+      (data.create_facts?.length || 0) + (data.update_facts?.length || 0) + (data.delete_facts?.length || 0) +
+      (data.create_threads?.length || 0) + (data.update_threads?.length || 0) + (data.delete_threads?.length || 0) +
+      (data.create_places?.length || 0) + (data.update_places?.length || 0) +
+      (data.create_factions?.length || 0) + (data.update_factions?.length || 0);
+
+    if (totalChanges === 0) {
+      statusEl.textContent = "The AI found no changes to make for that instruction.";
+      btn.disabled = false;
+      btn.textContent = "⚡ Run";
+      return;
+    }
+
+    _renderGodPromptSuggestions(data);
+    document.getElementById("god-prompt-input-area").style.display = "none";
+    document.getElementById("god-prompt-footer").style.display = "flex";
+
+  } catch (e) {
+    statusEl.textContent = `Error: ${e.message}`;
+    btn.disabled = false;
+    btn.textContent = "⚡ Run";
+  }
+}
+
+function _godRow(label, reason, checked = true) {
+  const id = `gp-${Math.random().toString(36).slice(2)}`;
+  return `<label class="god-prompt-row" style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);cursor:pointer">
+    <input type="checkbox" class="gp-chk" id="${id}" ${checked ? "checked" : ""} style="margin-top:3px;flex-shrink:0">
+    <div style="flex:1;min-width:0">
+      <div style="font-size:0.9rem">${escHtml(label)}</div>
+      ${reason ? `<div class="muted" style="font-size:0.78rem;margin-top:2px">${escHtml(reason)}</div>` : ""}
+    </div>
+  </label>`;
+}
+
+function _godSection(title, rows) {
+  if (!rows.length) return "";
+  return `<div style="margin-bottom:14px">
+    <div style="font-weight:600;font-size:0.85rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">${escHtml(title)}</div>
+    ${rows.join("")}
+  </div>`;
+}
+
+function _renderGodPromptSuggestions(data) {
+  const el = document.getElementById("god-prompt-suggestions");
+  const sections = [];
+
+  // NPCs
+  const npcRows = [];
+  (data.update_npcs || []).forEach((u, i) => {
+    npcRows.push(_godRow(`Update ${u.npc_name}: set ${u.field} → "${u.new_value}"`, u.reason));
+  });
+  (data.create_npcs || []).forEach((n, i) => {
+    npcRows.push(_godRow(`Create NPC: ${n.name} (${n.role || "NPC"})`, n.reason));
+  });
+  (data.delete_npcs || []).forEach((n, i) => {
+    npcRows.push(_godRow(`⚠ Delete NPC: ${n.npc_name}`, n.reason, false));
+  });
+  sections.push(_godSection("NPCs", npcRows));
+
+  // World Facts
+  const factRows = [];
+  (data.create_facts || []).forEach(f => {
+    factRows.push(_godRow(`Add fact: "${f.content}"`, f.reason));
+  });
+  (data.update_facts || []).forEach(f => {
+    factRows.push(_godRow(`Update fact: "${f.old_content}" → "${f.new_content}"`, f.reason));
+  });
+  (data.delete_facts || []).forEach(f => {
+    factRows.push(_godRow(`⚠ Delete fact: "${f.content}"`, f.reason, false));
+  });
+  sections.push(_godSection("World Facts", factRows));
+
+  // Threads
+  const threadRows = [];
+  (data.create_threads || []).forEach(t => {
+    threadRows.push(_godRow(`Create thread: "${t.title}"`, t.reason));
+  });
+  (data.update_threads || []).forEach(t => {
+    threadRows.push(_godRow(`Update thread "${t.title}": status → ${t.new_status}`, t.reason));
+  });
+  (data.delete_threads || []).forEach(t => {
+    threadRows.push(_godRow(`⚠ Delete thread: "${t.title}"`, t.reason, false));
+  });
+  sections.push(_godSection("Narrative Threads", threadRows));
+
+  // Places
+  const placeRows = [];
+  (data.create_places || []).forEach(p => {
+    placeRows.push(_godRow(`Create place: "${p.name}"`, p.reason));
+  });
+  (data.update_places || []).forEach(p => {
+    placeRows.push(_godRow(`Update place "${p.name}": ${p.field} → "${p.new_value}"`, p.reason));
+  });
+  sections.push(_godSection("Places", placeRows));
+
+  // Factions
+  const factionRows = [];
+  (data.create_factions || []).forEach(f => {
+    factionRows.push(_godRow(`Create faction: "${f.name}"`, f.reason));
+  });
+  (data.update_factions || []).forEach(f => {
+    factionRows.push(_godRow(`Update faction "${f.name}": ${f.field} → "${f.new_value}"`, f.reason));
+  });
+  sections.push(_godSection("Factions", factionRows));
+
+  el.innerHTML = sections.join("") || "<p class='muted'>No changes proposed.</p>";
+  el.style.display = "";
+}
+
+async function applyGodPrompt() {
+  if (!_godPromptResult) return;
+
+  const data = _godPromptResult;
+  const btn  = document.getElementById("god-prompt-apply-btn");
+  btn.disabled = true;
+  btn.textContent = "Applying…";
+
+  // Collect checked rows in order
+  const checks = [...document.querySelectorAll(".gp-chk")];
+  let idx = 0;
+  const isChecked = () => checks[idx++]?.checked ?? false;
+
+  const errors = [];
+
+  async function apiCall(method, path, body) {
+    try {
+      const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}${path}`, {
+        method,
+        headers: body ? { "Content-Type": "application/json" } : {},
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        errors.push(`${method} ${path}: ${e.detail || res.status}`);
+      }
+      return res.ok ? (res.status !== 204 ? await res.json().catch(() => null) : null) : null;
+    } catch (e) {
+      errors.push(`${method} ${path}: ${e.message}`);
+      return null;
+    }
+  }
+
+  // ── NPCs ────────────────────────────────────────────────────────────────
+  for (const u of (data.update_npcs || [])) {
+    if (!isChecked()) continue;
+    const npc = _npcs.find(n => n.id === u.npc_id);
+    if (!npc) { errors.push(`NPC not found: ${u.npc_name}`); continue; }
+    await apiCall("PUT", "/npcs", { ...npc, [u.field]: u.new_value });
+  }
+  for (const n of (data.create_npcs || [])) {
+    if (!isChecked()) continue;
+    await apiCall("PUT", "/npcs", {
+      name: n.name, role: n.role || "", appearance: n.appearance || "",
+      personality: n.personality || "", relationship_to_player: n.relationship_to_player || "",
+      current_state: n.current_state || "", short_term_goal: n.short_term_goal || "",
+      secrets: n.secrets || "",
+    });
+  }
+  for (const n of (data.delete_npcs || [])) {
+    if (!isChecked()) continue;
+    await apiCall("DELETE", `/npcs/${n.npc_id}`);
+  }
+
+  // ── World Facts ──────────────────────────────────────────────────────────
+  for (const f of (data.create_facts || [])) {
+    if (!isChecked()) continue;
+    const existing = _facts.map(x => x.content);
+    await apiCall("PUT", "/world-facts", [...existing, f.content].map((c, i) => ({
+      content: c, category: "", priority: "normal", fact_order: i,
+    })));
+  }
+  for (const f of (data.update_facts || [])) {
+    if (!isChecked()) continue;
+    await apiCall("PATCH", `/world-facts/${f.fact_id}`, { content: f.new_content });
+  }
+  for (const f of (data.delete_facts || [])) {
+    if (!isChecked()) continue;
+    await apiCall("DELETE", `/world-facts/${f.fact_id}`);
+  }
+
+  // ── Threads ──────────────────────────────────────────────────────────────
+  for (const t of (data.create_threads || [])) {
+    if (!isChecked()) continue;
+    await apiCall("PUT", "/threads", {
+      title: t.title, description: t.description || "", status: "active", resolution: "",
+    });
+  }
+  for (const t of (data.update_threads || [])) {
+    if (!isChecked()) continue;
+    const existing = _threads.find(x => x.id === t.thread_id);
+    if (!existing) { errors.push(`Thread not found: ${t.title}`); continue; }
+    await apiCall("PUT", "/threads", {
+      ...existing,
+      status: t.new_status || existing.status,
+      description: t.description || existing.description,
+      resolution: t.resolution || existing.resolution,
+    });
+  }
+  for (const t of (data.delete_threads || [])) {
+    if (!isChecked()) continue;
+    await apiCall("DELETE", `/threads/${t.thread_id}`);
+  }
+
+  // ── Places ───────────────────────────────────────────────────────────────
+  for (const p of (data.create_places || [])) {
+    if (!isChecked()) continue;
+    await apiCall("PUT", "/places", {
+      name: p.name, description: p.description || "", current_state: p.current_state || "",
+    });
+  }
+  for (const p of (data.update_places || [])) {
+    if (!isChecked()) continue;
+    const existing = _places.find(x => x.id === p.place_id);
+    if (!existing) { errors.push(`Place not found: ${p.name}`); continue; }
+    await apiCall("PUT", "/places", { ...existing, [p.field]: p.new_value });
+  }
+
+  // ── Factions ─────────────────────────────────────────────────────────────
+  for (const f of (data.create_factions || [])) {
+    if (!isChecked()) continue;
+    await apiCall("PUT", "/factions", {
+      name: f.name, description: f.description || "",
+      goals: f.goals || "", standing_with_player: f.standing_with_player || "neutral",
+    });
+  }
+  for (const f of (data.update_factions || [])) {
+    if (!isChecked()) continue;
+    const existing = _factions.find(x => x.id === f.faction_id);
+    if (!existing) { errors.push(`Faction not found: ${f.name}`); continue; }
+    await apiCall("PUT", "/factions", { ...existing, [f.field]: f.new_value });
+  }
+
+  btn.disabled = false;
+  btn.textContent = "✓ Apply Selected Changes";
+
+  if (errors.length) {
+    showBanner(`Applied with ${errors.length} error(s): ${errors[0]}`, "warning");
+  } else {
+    showBanner("World updated successfully.", "success");
+  }
+
+  closeModal("god-prompt-modal");
+  loadWorld();
+}

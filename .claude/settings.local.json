@@ -69,7 +69,8 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" -X POST http://localhost:11434/api/chat -H \"Content-Type: application/json\" -d \"{\\\\\"model\\\\\":\\\\\"minimax-m2.7:cloud\\\\\",\\\\\"messages\\\\\":[{\\\\\"role\\\\\":\\\\\"user\\\\\",\\\\\"content\\\\\":\\\\\"hi\\\\\"}],\\\\\"stream\\\\\":false,\\\\\"options\\\\\":{\\\\\"num_predict\\\\\":5}}\")",
       "Bash(curl -s -X POST http://localhost:11434/api/chat -H \"Content-Type: application/json\" -d \"{\\\\\"model\\\\\":\\\\\"hf.co/DavidAU/Fimbulvetr-11B-Ultra-Quality-plus-imatrix-GGUF:latest\\\\\",\\\\\"messages\\\\\":[{\\\\\"role\\\\\":\\\\\"user\\\\\",\\\\\"content\\\\\":\\\\\"hi\\\\\"}],\\\\\"stream\\\\\":false,\\\\\"options\\\\\":{\\\\\"num_predict\\\\\":5}}\")",
       "Bash(python -c \"from app.web.server import app; print\\('OK'\\)\")",
-      "Bash(node --check app/web/static/index.js)"
+      "Bash(node --check app/web/static/index.js)",
+      "Bash(xargs grep:*)"
     ],
     "additionalDirectories": [
       "c:\\Users\\devio\\.claude\\projects\\c--Antigravity-Projects-RP-Utility\\memory"

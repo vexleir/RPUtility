@@ -43,6 +43,7 @@
       <button class="btn btn-sm" onclick="openRestoreModal()">⬆ Restore</button>
       <button class="btn btn-sm" onclick="exportTemplate()">⬇ Export Template</button>
       <button class="btn btn-sm" onclick="openTemplateModal()">📋 Save as Template</button>
+      <button class="btn btn-sm" onclick="openGodPrompt()">⚡ God Prompt</button>
       <button class="btn btn-sm" onclick="openEditCampaign()">✎ Edit Settings</button>
       <button class="btn btn-sm btn-danger" onclick="confirmDeleteCampaign()">Delete Campaign</button>
     </div>
@@ -982,6 +983,41 @@
           <button class="btn btn-primary" onclick="confirmImportCard()">Import NPC →</button>
           <button class="btn" onclick="closeModal('import-card-modal')">Cancel</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── God Prompt modal ──────────────────────────────────────────── -->
+  <div id="god-prompt-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:700px;max-height:90vh;display:flex;flex-direction:column">
+      <div class="modal-header">
+        <span>⚡ God Prompt</span>
+        <button class="modal-close" onclick="closeModal('god-prompt-modal')">✕</button>
+      </div>
+      <div class="modal-body" style="flex:1;overflow-y:auto">
+        <p class="muted" style="font-size:0.85rem;margin-bottom:12px">
+          Describe any change you want to make to the world — update an NPC's state, resolve a thread, add a fact, destroy a city. The AI will figure out what to create, update, or remove and show you the proposed changes before applying them.
+        </p>
+        <div id="god-prompt-input-area">
+          <div class="form-group">
+            <label>Instruction</label>
+            <textarea id="god-prompt-instruction" rows="3"
+              placeholder="e.g. 'The guild master was assassinated last night. Mark him as dead, resolve the Thieves Guild thread, and add a fact that the guild is now in chaos.'"
+              style="width:100%;box-sizing:border-box"></textarea>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn btn-primary" id="god-prompt-run-btn" onclick="runGodPrompt()">⚡ Run</button>
+            <span class="muted" id="god-prompt-status" style="font-size:0.82rem"></span>
+          </div>
+        </div>
+
+        <!-- Suggestions rendered here after AI responds -->
+        <div id="god-prompt-suggestions" style="display:none;margin-top:16px"></div>
+      </div>
+      <div class="modal-footer" id="god-prompt-footer" style="display:none">
+        <button class="btn" onclick="resetGodPrompt()" style="margin-right:auto">← Back</button>
+        <button class="btn btn-primary" id="god-prompt-apply-btn" onclick="applyGodPrompt()">✓ Apply Selected Changes</button>
+        <button class="btn" onclick="closeModal('god-prompt-modal')">Cancel</button>
       </div>
     </div>
   </div>
