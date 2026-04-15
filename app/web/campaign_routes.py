@@ -357,7 +357,7 @@ def _ai_chat(
         return strip_thoughts_from_text(r.json()["choices"][0]["message"]["content"].strip())
 
 
-def _ai_stream(
+def _raw_ai_stream(
     messages: list[dict],
     *,
     model: str = "",
@@ -370,10 +370,7 @@ def _ai_stream(
     repeat_penalty: float | None = None,
     seed: int | None = None,
 ):
-    """Streaming AI chat call, provider-agnostic. Yields str chunks."""
-    from app.utils.stream import strip_thought_blocks
-    def _generator():
-        if config.provider == "ollama":
+    if config.provider == "ollama":
         opts: dict = {
             "temperature": temperature,
             # max_tokens <= 0 means "no hard limit" — pass -1 so Ollama generates
@@ -444,7 +441,10 @@ def _ai_stream(
                         yield delta
                 except (KeyError, IndexError, _json_mod.JSONDecodeError):
                     continue
-    return strip_thought_blocks(_generator())
+def _ai_stream(messages: list[dict], **kwargs):
+    """Streaming AI chat call, provider-agnostic. Yields str chunks."""
+    from app.utils.stream import strip_thought_blocks
+    return strip_thought_blocks(_raw_ai_stream(messages, **kwargs))
 
 
 def _provider_error_msg() -> str:
