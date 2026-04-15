@@ -517,8 +517,8 @@ class RoleplayEngine:
 
         gp = gen_params or {}
         chunks: list[str] = []
-        from app.utils.stream import strip_thought_blocks
-        for token in strip_thought_blocks(provider.chat_stream(
+        from app.utils.stream import strip_thought_blocks, break_loops
+        for token in break_loops(strip_thought_blocks(provider.chat_stream(
             messages,
             temperature=gp.get("temperature", self.config.temperature),
             max_tokens=gp.get("max_tokens", self.config.max_tokens),
@@ -584,8 +584,8 @@ class RoleplayEngine:
 
     def _stream_response(self, messages: list[dict], provider) -> str:
         chunks = []
-        from app.utils.stream import strip_thought_blocks
-        for chunk in strip_thought_blocks(provider.generate_stream(
+        from app.utils.stream import strip_thought_blocks, break_loops
+        for chunk in break_loops(strip_thought_blocks(provider.generate_stream(
             messages[-1]["content"],
             system=next((m["content"] for m in messages if m["role"] == "system"), ""),
             temperature=self.config.temperature,

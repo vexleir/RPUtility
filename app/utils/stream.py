@@ -1,5 +1,23 @@
 from typing import Generator
 
+def break_loops(stream_gen: Generator[str, None, None]) -> Generator[str, None, None]:
+    """
+    Monitors the stream for Repetition Collapse (a common LLM glitch where it
+    repeats the same phrase recursively) and gracefully terminates the stream early.
+    """
+    history = ""
+    for chunk in stream_gen:
+        history += chunk
+        yield chunk
+        
+        # If the last 40 characters have repeated at least 4 times recently,
+        # it is caught in a repetition collapse. Sever the connection.
+        if len(history) > 150:
+            tail = history[-40:]
+            if len(tail.strip()) > 20 and history[-400:].count(tail) >= 4:
+                break
+
+
 def strip_thought_blocks(stream_gen: Generator[str, None, None]) -> Generator[str, None, None]:
     """
     Wraps a token generator and drops any tokens emitted inside

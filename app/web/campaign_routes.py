@@ -443,8 +443,8 @@ def _raw_ai_stream(
                     continue
 def _ai_stream(messages: list[dict], **kwargs):
     """Streaming AI chat call, provider-agnostic. Yields str chunks."""
-    from app.utils.stream import strip_thought_blocks
-    return strip_thought_blocks(_raw_ai_stream(messages, **kwargs))
+    from app.utils.stream import strip_thought_blocks, break_loops
+    return break_loops(strip_thought_blocks(_raw_ai_stream(messages, **kwargs)))
 
 
 def _provider_error_msg() -> str:
