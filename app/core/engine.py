@@ -527,7 +527,7 @@ class RoleplayEngine:
             min_p=gp.get("min_p"),
             repeat_penalty=gp.get("repeat_penalty"),
             seed=gp.get("seed"),
-        )):
+        ))):
             chunks.append(token)
             yield token
 
@@ -590,7 +590,7 @@ class RoleplayEngine:
             system=next((m["content"] for m in messages if m["role"] == "system"), ""),
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
-        )):
+        ))):
             print(chunk, end="", flush=True)
             chunks.append(chunk)
         print()

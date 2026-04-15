@@ -70,7 +70,18 @@
       "Bash(curl -s -X POST http://localhost:11434/api/chat -H \"Content-Type: application/json\" -d \"{\\\\\"model\\\\\":\\\\\"hf.co/DavidAU/Fimbulvetr-11B-Ultra-Quality-plus-imatrix-GGUF:latest\\\\\",\\\\\"messages\\\\\":[{\\\\\"role\\\\\":\\\\\"user\\\\\",\\\\\"content\\\\\":\\\\\"hi\\\\\"}],\\\\\"stream\\\\\":false,\\\\\"options\\\\\":{\\\\\"num_predict\\\\\":5}}\")",
       "Bash(python -c \"from app.web.server import app; print\\('OK'\\)\")",
       "Bash(node --check app/web/static/index.js)",
-      "Bash(xargs grep:*)"
+      "Bash(xargs grep:*)",
+      "Read(//f/Sandbox/RPUtility/app/web/**)",
+      "Read(//f/Sandbox/RPUtility/app/core/**)",
+      "Bash(python3 -c \"import os; print\\(os.path.exists\\('F:/Sandbox/RPUtility'\\)\\)\")",
+      "Bash(cmd.exe /c \"dir F:\\\\Sandbox\\\\RPUtility\\\\app\\\\web\\\\campaign_routes.py\")",
+      "Bash(cmd.exe /c \"type F:\\\\Sandbox\\\\RPUtility\\\\app\\\\core\\\\engine.py\")",
+      "Bash(cmd.exe /c \"dir F:\\\\Sandbox\\\\RPUtility\\\\app\\\\core\\\\\" 2>&1 | head -10)",
+      "Bash(cmd.exe /c \"dir F:\\\\\\\\Sandbox\\\\\\\\RPUtility\\\\\\\\app\\\\\\\\core\\\\\\\\\")",
+      "Bash(cmd.exe /c \"if exist F:\\\\\\\\Sandbox\\\\\\\\RPUtility\\\\\\\\app\\\\\\\\core\\\\\\\\engine.py \\(echo EXISTS\\) else \\(echo MISSING\\)\")",
+      "Bash(powershell -Command \"Get-Content 'F:\\\\Sandbox\\\\RPUtility\\\\app\\\\core\\\\engine.py' | Select-Object -Skip 505 -First 40\")",
+      "Read(//mnt/f/Sandbox/RPUtility/app/**)",
+      "Bash(python -c ' *)"
     ],
     "additionalDirectories": [
       "c:\\Users\\devio\\.claude\\projects\\c--Antigravity-Projects-RP-Utility\\memory"

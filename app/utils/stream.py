@@ -1,136 +1,171 @@
+"""
+Stream utilities: thought-block stripping and repetition-loop detection.
+"""
+
+from __future__ import annotations
 from typing import Generator
 
-def break_loops(stream_gen: Generator[str, None, None]) -> Generator[str, None, None]:
-    """
-    Monitors the stream for Repetition Collapse (a common LLM glitch where it
-    repeats the same phrase recursively) and gracefully terminates the stream early.
-    """
-    history = ""
-    for chunk in stream_gen:
-        history += chunk
-        yield chunk
-        
-        # If the last 40 characters have repeated at least 4 times recently,
-        # it is caught in a repetition collapse. Sever the connection.
-        if len(history) > 150:
-            tail = history[-40:]
-            if len(tail.strip()) > 20 and history[-400:].count(tail) >= 4:
-                break
+
+# ── Thought-block configuration ────────────────────────────────────────────────
+
+# Each tuple is (start_marker, end_marker) for a model's thinking-token format.
+_THOUGHT_PATTERNS: list[tuple[str, str]] = [
+    ("<think>",                "</think>"),        # DeepSeek-R1, Qwen3
+    ("<|channel>thought",      "<channel|>"),      # Gemma 3 thinking
+    ("<start_of_turn>thought", "<end_of_turn>"),   # Gemma chat thinking variant
+]
+
+_MAX_START_LEN = max(len(s) for s, _ in _THOUGHT_PATTERNS)
 
 
-def strip_thought_blocks(stream_gen: Generator[str, None, None]) -> Generator[str, None, None]:
+# ── Public API ─────────────────────────────────────────────────────────────────
+
+def strip_thought_blocks(
+    stream_gen: Generator[str, None, None],
+) -> Generator[str, None, None]:
     """
-    Wraps a token generator and drops any tokens emitted inside
-    <think>...</think> or <|channel>thought...</channel|> tags, 
-    so the AI's internal reasoning is hidden from the UI and history.
+    Wrap a token generator and drop all content inside thinking blocks.
+
+    Each start marker is paired with its own end marker (not any end marker),
+    so mixed-format responses are handled correctly. Multi-chunk markers
+    (split across a chunk boundary) are handled via a small lookahead buffer.
+    Multiple thinking blocks in one response are all stripped.
     """
-    in_thought = False
-    buffer = ""
-    
-    start_tags = ["<|channel>thought", "<think>", "<start_of_turn>thought"]
-    end_tags = ["<channel|>", "</think>", "<|channel|>"]
-    
+    buf = ""
+    in_block = False
+    end_marker = ""
+
     for chunk in stream_gen:
-        buffer += chunk
-        
-        while buffer:
-            if in_thought:
-                found_end = False
-                for et in end_tags:
-                    idx = buffer.find(et)
-                    if idx != -1:
-                        # Found the end of the thought block!
-                        buffer = buffer[idx + len(et):]
-                        in_thought = False
-                        found_end = True
-                        break
-                
-                if found_end:
-                    continue
-                
-                # Check for partial end tag
-                idx = buffer.rfind("<")
+        buf += chunk
+
+        while buf:
+            if in_block:
+                idx = buf.find(end_marker)
                 if idx != -1:
-                    buffer = buffer[idx:]
+                    # Discard everything up to and including the end marker.
+                    buf = buf[idx + len(end_marker):]
+                    in_block = False
                 else:
-                    buffer = ""
-                break
-                
+                    # End marker not yet fully received — keep a tail so the
+                    # next chunk can complete it.
+                    keep = len(end_marker) - 1
+                    buf = buf[-keep:] if keep > 0 else ""
+                    break
             else:
-                found_start = False
-                first_start_idx = len(buffer)
-                matched_st = ""
-                
-                for st in start_tags:
-                    idx = buffer.find(st)
-                    if idx != -1 and idx < first_start_idx:
-                        first_start_idx = idx
-                        matched_st = st
-                        found_start = True
-                        
-                if found_start:
-                    if first_start_idx > 0:
-                        yield buffer[:first_start_idx]
-                    buffer = buffer[first_start_idx + len(matched_st):]
-                    in_thought = True
-                    continue
-                
-                idx = buffer.rfind("<")
-                if idx != -1:
-                    if idx > 0:
-                        yield buffer[:idx]
-                    buffer = buffer[idx:]
-                    
-                    is_prefix = False
-                    for st in start_tags:
-                        if st.startswith(buffer):
-                            is_prefix = True
-                            break
-                    
-                    if not is_prefix:
-                        yield buffer[0]
-                        buffer = buffer[1:]
-                        continue
+                # Find the earliest start marker in the buffer.
+                earliest_idx: int | None = None
+                matched_start = ""
+                matched_end = ""
+                for start, end in _THOUGHT_PATTERNS:
+                    idx = buf.find(start)
+                    if idx != -1 and (earliest_idx is None or idx < earliest_idx):
+                        earliest_idx = idx
+                        matched_start = start
+                        matched_end = end
+
+                if earliest_idx is not None:
+                    # Yield content before the start marker, then enter block.
+                    if earliest_idx > 0:
+                        yield buf[:earliest_idx]
+                    in_block = True
+                    end_marker = matched_end
+                    buf = buf[earliest_idx + len(matched_start):]
                 else:
-                    yield buffer
-                    buffer = ""
-                break
-                
-    if not in_thought and buffer:
-        yield buffer
+                    # No start marker — yield safely, keeping a partial-marker
+                    # tail in case one spans the next chunk boundary.
+                    safe = len(buf) - _MAX_START_LEN
+                    if safe > 0:
+                        yield buf[:safe]
+                        buf = buf[safe:]
+                    break
+
+    # Flush anything remaining after the stream ends.
+    if not in_block and buf:
+        yield buf
 
 
 def strip_thoughts_from_text(text: str) -> str:
     """
-    Strips the thinking blocks cleanly out of a completed string.
+    Strip all thinking blocks from a complete (non-streaming) string.
+    Each start marker is paired with its own matching end marker.
+    Unclosed blocks are truncated at the start marker.
     """
-    start_tags = ["<|channel>thought", "<think>", "<start_of_turn>thought"]
-    end_tags = ["<channel|>", "</think>", "<|channel|>"]
-    
-    while True:
-        first_idx = -1
+    changed = True
+    while changed:
+        changed = False
+        earliest_idx: int | None = None
         matched_start = ""
-        for st in start_tags:
-            idx = text.find(st)
-            if idx != -1 and (first_idx == -1 or idx < first_idx):
-                first_idx = idx
-                matched_start = st
-        
-        if first_idx == -1:
+        matched_end = ""
+        for start, end in _THOUGHT_PATTERNS:
+            idx = text.find(start)
+            if idx != -1 and (earliest_idx is None or idx < earliest_idx):
+                earliest_idx = idx
+                matched_start = start
+                matched_end = end
+
+        if earliest_idx is None:
             break
-            
-        end_idx = -1
-        search_from = first_idx + len(matched_start)
-        for et in end_tags:
-            idx = text.find(et, search_from)
-            if idx != -1 and (end_idx == -1 or idx < end_idx):
-                end_idx = idx + len(et)
-                
+
+        end_idx = text.find(matched_end, earliest_idx + len(matched_start))
         if end_idx != -1:
-            text = text[:first_idx] + text[end_idx:]
+            text = text[:earliest_idx] + text[end_idx + len(matched_end):]
+            changed = True
         else:
-            # unclosed thought block, strip everything after
-            text = text[:first_idx]
+            # Unclosed block — strip everything from the start marker onward.
+            text = text[:earliest_idx]
             break
-            
+
     return text.strip()
+
+
+def break_loops(
+    stream_gen: Generator[str, None, None],
+    window_words: int = 80,
+    ngram_size: int = 4,
+    max_repeats: int = 5,
+) -> Generator[str, None, None]:
+    """
+    Terminate a stream early when a word n-gram repetition loop is detected.
+
+    Uses word n-grams (not raw character strings) so near-repetitions are
+    caught even when small words vary:
+        "his thumbs finding that perfect spot"
+        "his thumbs finding that specific spot"   ← different last word
+        "his thumbs finding that precise spot"    ← still caught by 4-gram
+
+    Punctuation is stripped before comparison so "spot," and "spot." match.
+
+    Parameters
+    ----------
+    window_words : Number of recent words to inspect for loops.
+    ngram_size   : Word n-gram length to use for pattern detection.
+    max_repeats  : Stop when the last n-gram has appeared this many times.
+    """
+    history = ""
+
+    for chunk in stream_gen:
+        history += chunk
+        yield chunk
+
+        if len(history) < 100:
+            continue
+
+        # Normalise the tail into word tokens.
+        raw_words = history.split()
+        words = [
+            w.lower().rstrip(".,!?;:'\"")
+            for w in raw_words[-window_words:]
+        ]
+
+        if len(words) < ngram_size * max_repeats:
+            continue
+
+        # Count occurrences of the most recent n-gram in the window.
+        last_gram = tuple(words[-ngram_size:])
+        count = sum(
+            1
+            for i in range(len(words) - ngram_size + 1)
+            if tuple(words[i : i + ngram_size]) == last_gram
+        )
+        if count >= max_repeats:
+            return  # Repetition loop detected — halt the stream.
