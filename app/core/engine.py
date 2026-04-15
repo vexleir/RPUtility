@@ -413,6 +413,8 @@ class RoleplayEngine:
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens,
             )
+            from app.utils.stream import strip_thoughts_from_text
+            response_text = strip_thoughts_from_text(response_text)
 
         assistant_turn = ConversationTurn(
             session_id=session_id,
@@ -515,7 +517,8 @@ class RoleplayEngine:
 
         gp = gen_params or {}
         chunks: list[str] = []
-        for token in provider.chat_stream(
+        from app.utils.stream import strip_thought_blocks
+        for token in strip_thought_blocks(provider.chat_stream(
             messages,
             temperature=gp.get("temperature", self.config.temperature),
             max_tokens=gp.get("max_tokens", self.config.max_tokens),
@@ -524,7 +527,7 @@ class RoleplayEngine:
             min_p=gp.get("min_p"),
             repeat_penalty=gp.get("repeat_penalty"),
             seed=gp.get("seed"),
-        ):
+        )):
             chunks.append(token)
             yield token
 
@@ -581,12 +584,13 @@ class RoleplayEngine:
 
     def _stream_response(self, messages: list[dict], provider) -> str:
         chunks = []
-        for chunk in provider.generate_stream(
+        from app.utils.stream import strip_thought_blocks
+        for chunk in strip_thought_blocks(provider.generate_stream(
             messages[-1]["content"],
             system=next((m["content"] for m in messages if m["role"] == "system"), ""),
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
-        ):
+        )):
             print(chunk, end="", flush=True)
             chunks.append(chunk)
         print()

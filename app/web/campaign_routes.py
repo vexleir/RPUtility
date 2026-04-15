@@ -333,7 +333,8 @@ def _ai_chat(
             used = model or config.ollama_model
             raise RuntimeError(f"Model '{used}' not found in Ollama. Check the model name.")
         r.raise_for_status()
-        return r.json()["message"]["content"].strip()
+        from app.utils.stream import strip_thoughts_from_text
+        return strip_thoughts_from_text(r.json()["message"]["content"].strip())
     else:
         # OpenAI-compat (LM Studio or KoboldCPP)
         base = config.lmstudio_base_url if config.provider == "lmstudio" else config.koboldcpp_base_url
@@ -352,7 +353,8 @@ def _ai_chat(
             timeout=_httpx.Timeout(10.0, read=300.0),
         )
         r.raise_for_status()
-        return r.json()["choices"][0]["message"]["content"].strip()
+        from app.utils.stream import strip_thoughts_from_text
+        return strip_thoughts_from_text(r.json()["choices"][0]["message"]["content"].strip())
 
 
 def _ai_stream(
@@ -369,7 +371,9 @@ def _ai_stream(
     seed: int | None = None,
 ):
     """Streaming AI chat call, provider-agnostic. Yields str chunks."""
-    if config.provider == "ollama":
+    from app.utils.stream import strip_thought_blocks
+    def _generator():
+        if config.provider == "ollama":
         opts: dict = {
             "temperature": temperature,
             # max_tokens <= 0 means "no hard limit" — pass -1 so Ollama generates
@@ -440,6 +444,7 @@ def _ai_stream(
                         yield delta
                 except (KeyError, IndexError, _json_mod.JSONDecodeError):
                     continue
+    return strip_thought_blocks(_generator())
 
 
 def _provider_error_msg() -> str:
