@@ -3,6 +3,7 @@ Stream utilities: thought-block stripping and repetition-loop detection.
 """
 
 from __future__ import annotations
+from collections import Counter
 from typing import Generator
 
 
@@ -120,26 +121,28 @@ def strip_thoughts_from_text(text: str) -> str:
 
 def break_loops(
     stream_gen: Generator[str, None, None],
-    window_words: int = 80,
+    window_words: int = 300,
     ngram_size: int = 4,
-    max_repeats: int = 5,
+    max_repeats: int = 3,
 ) -> Generator[str, None, None]:
     """
     Terminate a stream early when a word n-gram repetition loop is detected.
 
     Uses word n-grams (not raw character strings) so near-repetitions are
     caught even when small words vary:
-        "his thumbs finding that perfect spot"
-        "his thumbs finding that specific spot"   ← different last word
-        "his thumbs finding that precise spot"    ← still caught by 4-gram
+        "his hips finding their rhythm"
+        "his hips finding their perfect rhythm"   ← different last word
+        "his hips finding their insistent rhythm" ← still caught by 4-gram
 
-    Punctuation is stripped before comparison so "spot," and "spot." match.
+    Punctuation is stripped before comparison so "rhythm," and "rhythm." match.
+    The most frequent n-gram in the window is checked (not just the last one),
+    so loops are detected regardless of what the current tail words are.
 
     Parameters
     ----------
     window_words : Number of recent words to inspect for loops.
     ngram_size   : Word n-gram length to use for pattern detection.
-    max_repeats  : Stop when the last n-gram has appeared this many times.
+    max_repeats  : Stop when any n-gram has appeared this many times in the window.
     """
     history = ""
 
@@ -160,12 +163,10 @@ def break_loops(
         if len(words) < ngram_size * max_repeats:
             continue
 
-        # Count occurrences of the most recent n-gram in the window.
-        last_gram = tuple(words[-ngram_size:])
-        count = sum(
-            1
+        # Count every n-gram in the window; halt if the most common one repeats.
+        counts = Counter(
+            tuple(words[i : i + ngram_size])
             for i in range(len(words) - ngram_size + 1)
-            if tuple(words[i : i + ngram_size]) == last_gram
         )
-        if count >= max_repeats:
+        if counts.most_common(1)[0][1] >= max_repeats:
             return  # Repetition loop detected — halt the stream.
