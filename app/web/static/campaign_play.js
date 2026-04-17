@@ -1257,6 +1257,7 @@ function _buildNpcProposalCard(n, i) {
 }
 
 async function applyWorldUpdates() {
+  console.log("[applyWorldUpdates] called. _pendingSuggestions =", _pendingSuggestions);
   if (!_pendingSuggestions) { skipWorldUpdates(); return; }
   const applyBtn = document.querySelector("#world-updates-modal .btn-primary");
   applyBtn.disabled = true;
@@ -1359,6 +1360,13 @@ async function applyWorldUpdates() {
     await _put(`/api/campaigns/${CAMPAIGN_ID}/npcs`, { ...npc, active_form: t.new_active_form || null },
       `Form transition: ${t.npc_name}`);
   }
+
+  console.log("[applyWorldUpdates] done. counts:", {
+    npcs: checkedNpcs.length, facts: checkedFacts.length, threads: checkedThreads.length,
+    newNpcs: acceptedNpcCards.length, newLocs: checkedNewLocs.length,
+    history: checkedHistory.length, forms: checkedForms.length,
+    failures: failures.length,
+  });
 
   if (failures.length) {
     applyBtn.disabled = false;
