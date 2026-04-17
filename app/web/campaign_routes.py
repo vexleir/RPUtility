@@ -57,6 +57,9 @@ from app.core.models import SceneState as _SceneState
 class _CampaignExtractionProvider:
     """Minimal provider adapter that routes generate() calls through _ai_chat."""
 
+    def __init__(self, model: str = ""):
+        self.model = model
+
     def generate(
         self,
         prompt: str,
@@ -69,7 +72,7 @@ class _CampaignExtractionProvider:
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
-        return _ai_chat(messages, temperature=temperature, max_tokens=max_tokens)
+        return _ai_chat(messages, model=self.model, temperature=temperature, max_tokens=max_tokens)
 
 
 def _campaign_memories() -> CampaignMemoryStore:
@@ -115,7 +118,11 @@ def _extract_scene_memories_background(
             active_characters=npc_names,
         )
 
-        provider = _CampaignExtractionProvider()
+        campaign = _campaigns().get(campaign_id)
+        model = (getattr(campaign, "summary_model_name", None) if campaign else None) \
+                or (campaign.model_name if campaign else None) \
+                or config.active_model()
+        provider = _CampaignExtractionProvider(model=model)
         mem_store = _campaign_memories()
         existing = mem_store.get_active(campaign_id)
 
@@ -173,7 +180,11 @@ def _update_profiles_background(
             lines.append(f"{label}: {t.content}")
         transcript = "\n\n".join(lines)
 
-        provider = _CampaignExtractionProvider()
+        campaign = _campaigns().get(campaign_id)
+        model = (getattr(campaign, "summary_model_name", None) if campaign else None) \
+                or (campaign.model_name if campaign else None) \
+                or config.active_model()
+        provider = _CampaignExtractionProvider(model=model)
         update_profiles_for_scene(
             provider=provider,
             campaign_id=campaign_id,
