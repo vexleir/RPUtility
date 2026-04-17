@@ -1274,7 +1274,11 @@ async function applyWorldUpdates() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        const detail = await res.text().catch(() => "");
+        console.error(`[applyWorldUpdates] ${label} failed:`, res.status, detail, "payload:", body);
+        throw new Error(`HTTP ${res.status}${detail ? ` — ${detail.slice(0, 200)}` : ""}`);
+      }
     } catch (e) {
       failures.push(`${label}: ${e.message}`);
     }
@@ -1358,10 +1362,9 @@ async function applyWorldUpdates() {
 
   if (failures.length) {
     applyBtn.disabled = false;
-    applyBtn.textContent = "Apply";
-    showBanner(
-      `${failures.length} update(s) failed to save:\n• ${failures.join("\n• ")}`,
-      "error"
+    applyBtn.textContent = "✓ Apply Selected";
+    showError(
+      `${failures.length} update(s) failed to save:\n• ${failures.join("\n• ")}`
     );
     return;
   }

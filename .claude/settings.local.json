@@ -81,10 +81,16 @@
       "Bash(cmd.exe /c \"if exist F:\\\\\\\\Sandbox\\\\\\\\RPUtility\\\\\\\\app\\\\\\\\core\\\\\\\\engine.py \\(echo EXISTS\\) else \\(echo MISSING\\)\")",
       "Bash(powershell -Command \"Get-Content 'F:\\\\Sandbox\\\\RPUtility\\\\app\\\\core\\\\engine.py' | Select-Object -Skip 505 -First 40\")",
       "Read(//mnt/f/Sandbox/RPUtility/app/**)",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(python -c \"from app.main import app; print\\('App imported OK —', len\\(app.routes\\), 'routes registered'\\)\")",
+      "Bash(python -c \"from app.main import app; print\\('OK —', len\\(app.routes\\), 'routes'\\)\")",
+      "Bash(python -c \"import starlette; print\\(starlette.__version__\\)\")",
+      "Bash(python -c \"import inspect, starlette.templating; print\\(inspect.signature\\(starlette.templating.Jinja2Templates.__init__\\)\\)\")"
     ],
     "additionalDirectories": [
-      "c:\\Users\\devio\\.claude\\projects\\c--Antigravity-Projects-RP-Utility\\memory"
+      "c:\\Users\\devio\\.claude\\projects\\c--Antigravity-Projects-RP-Utility\\memory",
+      "c:\\Antigravity Projects\\Storyweft\\app",
+      "c:\\Antigravity Projects\\Storyweft"
     ]
   }
 }
