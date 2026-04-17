@@ -1259,7 +1259,7 @@ function _buildNpcProposalCard(n, i) {
 async function applyWorldUpdates() {
   console.log("[applyWorldUpdates] called. _pendingSuggestions =", _pendingSuggestions);
   if (!_pendingSuggestions) { skipWorldUpdates(); return; }
-  const applyBtn = document.querySelector("#world-updates-modal .btn-primary");
+  const applyBtn = document.getElementById("world-updates-apply-btn");
   applyBtn.disabled = true;
   applyBtn.textContent = "Applying…";
 
